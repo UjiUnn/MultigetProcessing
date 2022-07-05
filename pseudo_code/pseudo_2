@@ -1,0 +1,87 @@
+procedure ProcessQuery(pkt)
+// packet header -> op, key-value, cutIndex, cutNum, keyNum
+- hash() : hash function giving the server number
+- cutIndex: tells where to cut the packet //0001 01 1
+- cutNum: tells number of truncated packets
+- keyNum: tells the number of keys
+- valueArr[][MAX]: store the value of the packet
+
+    //Request
+    if pkt.op == mget then
+        if pkt.keyNum <= 4 then //1111
+
+            if pkt.keyNum == 0 then
+                drop the pkt
+            
+            if pkt.keyNum < 4 then //0111 -> 1110
+                left shift 4 - pkt.keyNum
+
+            if pkt.cutIndex >= 8 then //1001 0010 1 key 0 1 2 3 111 1110 -> 1100 -> 1000 -> 0000
+                left shift 1 pkt.cutIndex
+                pkt.keyNum -= 1
+                mirror the pkt //mirror_packet
+                
+                drop pkt.key[1...pkt.keyNum-1]
+                pkt.keyNum = 1
+            
+            else if pkt.cutIndex >= 4 then //0101 -> 0100
+                left shift 2 pkt.cutIndex
+                pkt.keyNum -= 2
+                mirror the pkt
+
+                drop pkt.key[2...pkt.keyNum-1]
+
+            else if pkt.cutIndex >= 2 then //0011 
+                left shift 3 pkt.cutIndex
+                pkt.keyNum -= 3
+                mirror the pkt
+
+                drop pkt.key[pkt.keyNum-1]
+                pkt.keyNum = 3
+
+            //else if pkt.cutIndex == 1 then 
+            read(pkt.value)
+
+        //pkt.keyNum > 4
+        else if pkt.keyNum > 4 then 
+            right shift 4 pkt.cutIndex // 0111 1111
+            mirror the pkt to remPkt
+
+            if pkt.cutIndex % 2 != 1 then
+                temp = pkt.cutIndex || 0001
+                drop pkt.cutIndex 
+                add pkt.cutIndex (4 bits) to temp
+
+            pkt.keyNum = 4
+            drop pkt.key[4...pkt.keyNum-1]
+            recirculate the pkt
+
+            left shift 4 remPkt.cutIndex
+            remPkt.keyNum = remPkt.keyNum - 4
+            drop remPkt.key[0...3]
+            recirculate the remPkt
+
+
+    else if pkt.op == get then
+        read(pkt.value)
+
+    //Reply
+    else if pkt.op == mgetReply then 
+
+        if (pkt.cutNum - length of valueArr[pkt.id]) == 1 then
+            add valueArr[pkt.id][0...pkt.cutNum-2] to pkt.value
+            
+        else valueArr[pkt.id][0...pkt.cutNum-2] = pkt.value
+
+        Forward pkt to client
+
+end procedure
+
+// mget 쿼리 통합 o
+// request에서 0일때 경우의 수 추가 (recirculate 일 때)
+// recirculate 삭제 o
+// signed 적용되는지 확인 o
+// drop value... 삭제 o
+// change... 삭제 o
+// request else 일 때 1인 경우도 추가
+// 제네릭 방법 찾아보기
