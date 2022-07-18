@@ -10,7 +10,6 @@ procedure ProcessQuery(pkt)
 
     //Request
     if pkt.op == mget then
-
         if pkt.keyNum > 4 then 
             temp = pkt.cutIndex
             keyTemp = pkt.keyNum
@@ -38,7 +37,7 @@ procedure ProcessQuery(pkt)
                 pkt.keyNum -= 1
                 if pkt.cutIndex != 0 then
                     mirror the pkt 
-                
+       
                 drop pkt.key[1...pkt.keyNum-1]
                 pkt.keyNum = 1
             
