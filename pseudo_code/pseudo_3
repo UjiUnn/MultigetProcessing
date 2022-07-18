@@ -6,73 +6,76 @@ procedure ProcessQuery(pkt)
 - cutNum: tells number of truncated packets
 - keyNum: tells the number of keys
 - valueArr[][MAX]: store the value of the packet
+- countArr[MAX]: count how many packets arrived
 
     //Request
     if pkt.op == mget then
-        if pkt.keyNum <= 4 then //1111
 
-            if pkt.keyNum == 0 then
-                drop the pkt
+        if pkt.keyNum > 4 then 
+            temp = pkt.cutIndex
+            keyTemp = pkt.keyNum
             
-            if pkt.keyNum < 4 then //0111 -> 1110
-                left shift 4 - pkt.keyNum
+            //replicated packet
+            left shift 4 pkt.cutIndex
+            keyNum -= 4
+            drop pkt.key[0...3]
+            mirror the pkt
 
-            if pkt.cutIndex >= 8 then //1001 0010 1 key 0 1 2 3 111 1110 -> 1100 -> 1000 -> 0000
+            //original packet 
+            right shift (keyTemp - 4) temp
+            drop pkt.cutIndex 
+            add temp (lower 4 bits) to pkt.cutIndex 
+
+            if pkt.cutIndex % 2 != 1 then
+                pkt.cutIndex = pkt.cutIndex || 0001
+
+            pkt.keyNum = 4
+            drop pkt.key[4...pkt.keyNum-1]
+
+        if pkt.keyNum <= 4 then 
+            if pkt.cutIndex >= 8 then 
                 left shift 1 pkt.cutIndex
                 pkt.keyNum -= 1
-                mirror the pkt //mirror_packet
+                if pkt.cutIndex != 0 then
+                    mirror the pkt 
                 
                 drop pkt.key[1...pkt.keyNum-1]
                 pkt.keyNum = 1
             
-            else if pkt.cutIndex >= 4 then //0101 -> 0100
+            else if pkt.cutIndex >= 4 then 
                 left shift 2 pkt.cutIndex
                 pkt.keyNum -= 2
-                mirror the pkt
+                if pkt.cutIndex != 0 then
+                    mirror the pkt
 
                 drop pkt.key[2...pkt.keyNum-1]
 
-            else if pkt.cutIndex >= 2 then //0011 
+            else if pkt.cutIndex >= 2 then 
                 left shift 3 pkt.cutIndex
                 pkt.keyNum -= 3
-                mirror the pkt
+                if pkt.cutIndex != 0 then
+                    mirror the pkt
 
                 drop pkt.key[pkt.keyNum-1]
                 pkt.keyNum = 3
 
-            //else if pkt.cutIndex == 1 then 
             read(pkt.value)
-
-        //pkt.keyNum > 4
-        else if pkt.keyNum > 4 then 
-            right shift 4 pkt.cutIndex // 0111 1111
-            mirror the pkt to remPkt
-
-            if pkt.cutIndex % 2 != 1 then
-                temp = pkt.cutIndex || 0001
-                drop pkt.cutIndex 
-                add pkt.cutIndex (4 bits) to temp
-
-            pkt.keyNum = 4
-            drop pkt.key[4...pkt.keyNum-1]
-            recirculate the pkt
-
-            left shift 4 remPkt.cutIndex
-            remPkt.keyNum = remPkt.keyNum - 4
-            drop remPkt.key[0...3]
-            recirculate the remPkt
-
 
     else if pkt.op == get then
         read(pkt.value)
 
     //Reply
+    else if pkt.op == getReply then 
+        Forward pkt to client
+        
     else if pkt.op == mgetReply then 
 
-        if (pkt.cutNum - length of valueArr[pkt.id]) == 1 then
-            add valueArr[pkt.id][0...pkt.cutNum-2] to pkt.value
+        if (pkt.cutNum - countArr[pkt.id]) == 1 then
+            add pkt.value to valueArr[pkt.id][0...pkt.cutNum-2]
             
-        else valueArr[pkt.id][0...pkt.cutNum-2] = pkt.value
+        else 
+            valueArr[pkt.id][0...pkt.cutNum-2] = pkt.value
+            countArr[pkt.id] += 1
 
         Forward pkt to client
 
@@ -81,3 +84,6 @@ end procedure
 // counter 배열 추가해서 value array reply, 동적 배열 못씀
 // get reply 추가
 // 4이상일 때 처리하기
+
+// Q. how key 인덱스 처리...?
+// Q. 4개 이상일 때, 같은 서버에 4개 가는 요청 먼저 처리...?
