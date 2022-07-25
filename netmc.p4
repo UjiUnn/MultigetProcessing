@@ -28,12 +28,22 @@ header ethernet_h {
     bit<16>   etherType;
 }
 
+header key_h {
+    bit<16> key;
+}
+
+header value_h {
+    bit<16> value;
+}
+
 header netmc_h { // Total 25 bytes actually
     bit<2> op;
     bit<8> id;
-    bit<4> cutIndex;
-    bit<8> keyNum;
-    bit<8> cutNum;
+    bit<32> cutIndex;
+    bit<6> keyNum;
+    bit<6> cutNum;
+    key_h[32] keys;
+    value_h[32] values;
 }
 
 header ipv4_h {
@@ -72,6 +82,7 @@ header udp_h {
     bit<16> len;
     bit<16> checksum;
 }
+
 struct header_t {
     ethernet_h ethernet;
     ipv4_h ipv4;
@@ -81,15 +92,11 @@ struct header_t {
 }
 
 struct metadata_t {
-    bit<16> cutIndex;
-    bit<16> keyNum;
-    bit<16> num_srv;
-    bit<2> found;
-    bit<32> oid_hash;
-    bit<32> hashtablenum;
-    bit<8> DstSrvIdx;
-    bit<32> threshold;
-    bit<2> large;
+    bit<6> count_key_num;
+    bit<16> req_value;
+    bit<32> cut_idx;
+    bit<6> key_num;
+    bit<8> dst_srv_idx;
     bit<1> do_ing_mirroring;  // Enable ingress mirroring
 }
 
@@ -109,17 +116,9 @@ struct empty_metadata_t {
     custom_metadata_t custom_metadata;
 }
 
-Register<bit<32>,_>(NUM_OBJ,0) rset;
-Register<bit<32>,_>(NUM_OBJ,0) rset2;
-Register<bit<32>,_>(NUM_OBJ,0) rset3;
-Register<bit<32>,_>(NUM_OBJ,0) rset4;
-Register<bit<16>,_>(1,0) DstSrvIdx; // result of round robin
-Register<bit<16>,_>(1,0) cutIdx; 
-Register<bit<16>,_>(1,0) keyNum; 
-Register<bit<8>,_>(1,0) num_srv;
-Register<bit<8>,_>(1,0) num_srv_large;
-Register<bit<16>,_>(1,0) threshold;
-Register<bit<32>,_>(1,0) hashtablenum;
+Register<bit<6>,_>(NUM_OBJ,0) count_key_num; //countArr
+Register<bit<16>,_>(NUM_OBJ,0) req_value; //valueArr 
+Register<bit<16>,_>(1,0) dst_srv_idx; // result of round robin
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -180,8 +179,6 @@ control SwitchIngress(
         inout ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md,
         inout ingress_intrinsic_metadata_for_tm_t ig_tm_md) {
 
-    Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) indirect_counter;
-
     action drop() {
         ig_intr_dprsr_md.drop_ctl=1;
     }
@@ -190,7 +187,6 @@ control SwitchIngress(
         ig_tm_md.ucast_egress_port = port;
     }
 
-    //@pragma stage 6
     table ipv4_exact {
         key = {
             hdr.ipv4.dstAddr: exact;
@@ -228,7 +224,7 @@ control SwitchIngress(
     };
 
     action get_dst_srv_rr_action(){
-        ig_md.DstSrvIdx = (bit<8>)get_dst_srv_rr.execute(0);
+        ig_md.dst_srv_idx = (bit<8>)get_dst_srv_rr.execute(0);
     }
 
     table get_dst_srv_rr_table{
@@ -239,168 +235,11 @@ control SwitchIngress(
         default_action = get_dst_srv_rr_action;
     }
 
-    RegisterAction<bit<32>, _, bit<32>>(rset) get_rset = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            if (reg_value == hdr.netmc.oid)
-                return_value = 1;
-            else
-                return_value = 0;
-        }
-    };
-
-    action get_rset_action(){
-        ig_md.found = (bit<2>)get_rset.execute(ig_md.oid_hash);
-    }
-    table get_rset_table{
-        actions = {
-            get_rset_action;
-        }
-        size = 1;
-        default_action = get_rset_action;
-    }
-
-    RegisterAction<bit<32>, _, bit<32>>(rset2) get_rset2 = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            if (reg_value == hdr.netmc.oid)
-                return_value = 1;
-            else
-                return_value = 0;
-        }
-    };
-
-    action get_rset2_action(){
-        ig_md.found = (bit<2>)get_rset2.execute(ig_md.oid_hash);
-    }
-
-    table get_rset2_table{
-        actions = {
-            get_rset2_action;
-        }
-        size = 1;
-        default_action = get_rset2_action;
-    }
-
-    RegisterAction<bit<32>, _, bit<32>>(rset3) get_rset3 = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            if (reg_value == hdr.netmc.oid)
-                return_value = 1;
-            else
-                return_value = 0;
-        }
-    };
-
-    action get_rset3_action(){
-        ig_md.found = (bit<2>)get_rset3.execute(ig_md.oid_hash);
-    }
-
-    table get_rset3_table{
-        actions = {
-            get_rset3_action;
-        }
-        size = 1;
-        default_action = get_rset3_action;
-    }
-
-    RegisterAction<bit<32>, _, bit<32>>(rset4) get_rset4 = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            if (reg_value == hdr.netmc.oid)
-                return_value = 1;
-            else
-                return_value = 0;
-        }
-    };
-
-    action get_rset4_action(){
-        ig_md.found = (bit<2>)get_rset4.execute(ig_md.oid_hash);
-    }
-
-    table get_rset4_table{
-        actions = {
-            get_rset4_action;
-        }
-        size = 1;
-        default_action = get_rset4_action;
-    }
-
-    RegisterAction<bit<32>, _, bit<32>>(rset) put_rset = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-                reg_value = hdr.netmc.oid;
-        }
-    };
-
-    action put_rset_action(){
-        put_rset.execute(ig_md.oid_hash);
-    }
-
-    table put_rset_table{
-        actions = {
-            put_rset_action;
-        }
-        size = 1;
-        default_action = put_rset_action;
-    }
-
-    RegisterAction<bit<32>, _, bit<32>>(rset2) put_rset2 = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            reg_value = hdr.netmc.oid;
-        }
-    };
-
-    action put_rset2_action(){
-        put_rset2.execute(ig_md.oid_hash);
-    }
-
-    table put_rset2_table{
-        actions = {
-            put_rset2_action;
-        }
-        size = 1;
-        default_action = put_rset2_action;
-    }
-
-    RegisterAction<bit<32>, _, bit<32>>(rset3) put_rset3 = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            reg_value = hdr.netmc.oid;
-        }
-    };
-
-    action put_rset3_action(){
-        put_rset3.execute(ig_md.oid_hash);
-    }
-
-    table put_rset3_table{
-        actions = {
-            put_rset3_action;
-        }
-        size = 1;
-        default_action = put_rset3_action;
-    }
-
-    RegisterAction<bit<32>, _, bit<32>>(rset4) put_rset4 = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            reg_value = hdr.netmc.oid;
-        }
-    };
-
-    action put_rset4_action(){
-        put_rset4.execute(ig_md.oid_hash);
-    }
-
-    table put_rset4_table{
-        actions = {
-            put_rset4_action;
-        }
-        size = 1;
-        default_action = put_rset4_action;
-    }
-
     action get_hash_action(){
         ig_md.oid_hash = hdr.netmc.oid%NUM_OBJ;
         //ig_md.oid_hash = hdr.netmc.oid;
     }
 
-
-    //@pragma stage 2
     table get_hash_table{
         actions = {
             get_hash_action;
@@ -409,7 +248,6 @@ control SwitchIngress(
         default_action = get_hash_action;
     }
 
-
     RegisterAction<bit<32>, _, bit<32>>(hashtablenum) get_hashtablenum = {
         void apply(inout bit<32> reg_value, out bit<32> return_value) {
             return_value = reg_value;
@@ -417,43 +255,17 @@ control SwitchIngress(
                 reg_value = 0;
             else
                 reg_value = reg_value + 1;
-
         }
     };
-
-    action assign_threshold_action(){
-        hdr.netmc.valsize = ig_md.threshold;
-    }
-
-    table assign_threshold_table{
-        actions = {
-            assign_threshold_action;
-        }
-        size = 1;
-        default_action = assign_threshold_action;
-    }
-
-    action get_hashtablenum_action(){
-        ig_md.hashtablenum = hdr.netmc.oid%NUM_HASH_TABLE;
-    }
-
-    table get_hashtablenum_table{
-        actions = {
-            get_hashtablenum_action;
-        }
-        size = 1;
-        default_action = get_hashtablenum_action;
-    }
 
     action get_dst_ip_action(bit<32> addr,bit<9> port){
         hdr.ipv4.dstAddr = addr;
         ig_tm_md.ucast_egress_port = port;
     }
 
-    //@pragma stage 2
     table get_dst_ip_table{
         key = {
-            ig_md.DstSrvIdx: exact;
+            ig_md.dst_srv_idx: exact;
         }
         actions = {
             get_dst_ip_action;
@@ -461,32 +273,6 @@ control SwitchIngress(
         size = 16;
         default_action = get_dst_ip_action(0,0x0);
     }
-
-    RegisterAction<bit<32>, _, bit<32>>(threshold) get_threshold = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            return_value = reg_value;
-        }
-    };
-
-    action get_threshold_action(){
-        ig_md.threshold = get_threshold.execute(0);
-    }
-
-    table get_threshold_table{
-        actions = {
-            get_threshold_action;
-        }
-        size = 1;
-        default_action = get_threshold_action;
-    }
-
-/////////////////
-
-    RegisterAction<bit<32>, _, bit<32>>(cutIdx) left_shift_cutIndex = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value){
-
-        }
-    };
 
     action left_shift1_cutIndex_action(){
         hdr.netmc.cutIndex = hdr.netmc.cutIndex << 1;
@@ -559,14 +345,35 @@ control SwitchIngress(
         default_action = mirror_fwd_action;
     }
 
-    action drop_key_action(bit<8> key){
-        
+    action drop_key1toN_action(){
+        hdr.netmc.keys.pop(hdr.netmc.keyNum-2);
+    }
+
+    table drop_key1toN_table {
+        actions = {
+            drop_key1toN_action;
+        }
+        size = 1;
+        default_action = drop_key1toN_action;
+    }
+
+    action drop_key2toN_action(){
+        hdr.netmc.keys.pop(hdr.netmc.keyNum-3);
+    }
+
+    table drop_key2toN_table {
+        actions = {
+            drop_key2toN_action;
+        }
+        size = 1;
+        default_action = drop_key2toN_action;
+    }
+
+    action drop_key_action(){
+        hdr.netmc.keys.pop();
     }
 
     table drop_key_table {
-        key = {
-            ig_md.ingress_port : exact;
-        }
         actions = {
             drop_key_action;
         }
@@ -574,40 +381,53 @@ control SwitchIngress(
         default_action = drop_key_action;
     }
 
-    RegisterAction<bit<16>, _, bit<16>>(cutIdx) get_cutIdx = {
-        void apply(inout bit<16> reg_value, out bit<16> return_value){
-            return_value = reg_value;
-        }
-    };
-
-    action get_cutIdx_action(){
-        ig_md.cutIdx = get_cutIdx.execute(0);
+    action drop_key4toN_action(){
+        hdr.netmc.keys.pop(hdr.netmc.keyNum-5);
     }
 
-    table get_cutIdx_table {
+    table drop_key4toN_table {
         actions = {
-            get_cutIdx_action;
+            drop_key4toN_action;
         }
         size = 1;
-        default_action = get_cutIdx_action;
+        default_action = drop_key4toN_action;
     }
 
-    RegisterAction<bit<16>, _, bit<16>>(cutIdx) get_keyNum = {
-        void apply(inout bit<16> reg_value, out bit<16> return_value){
-            return_value = reg_value;
-        }
-    };
 
-    action get_keyNum_action(){
-        ig_md.keyNum = get_keyNum.execute(0);
+    action drop_key4_action(){
+        hdr.netmc.keys.pop_front(4);
     }
 
-    table get_keyNum_table {
+    table drop_key4_table {
         actions = {
-            get_keyNum_action;
+            drop_key4_action;
         }
         size = 1;
-        default_action = get_keyNum_action;
+        default_action = drop_key4_action;
+    }
+
+    action get_cut_idx_action(){
+        ig_md.cut_idx = hdr.netmc.cutIndex;
+    }
+
+    table get_cut_idx_table {
+        actions = {
+            get_cut_idx_action;
+        }
+        size = 1;
+        default_action = get_cut_idx_action;
+    }
+
+    action get_key_num_action(){
+        ig_md.key_num = hdr.netmc.keyNum;
+    }
+
+    table get_key_num_table {
+        actions = {
+            get_key_num_action;
+        }
+        size = 1;
+        default_action = get_key_num_action;
     }
 
     action assign_keyNum1_action(){
@@ -658,20 +478,20 @@ control SwitchIngress(
         default_action = assign_keyNum4_action;
     }
 
-    action right_shiftT4_cutIndex_action(){
+    action right_shift4_cutIndex_action(){
         ig_md.cutIndex = ig_md.cutIndex >> (ig_md.keyNum - 4);
     }
 
-    table right_shiftT4_cutIndex_table{
+    table right_shift4_cutIndex_table{
         actions = {
-            right_shiftT4_cutIndex_action;
+            right_shift4_cutIndex_action;
         }
         size = 1;
-        default_action = right_shiftT4_cutIndex_action;
+        default_action = right_shift4_cutIndex_action;
     }
 
     action add_4bits_action(){
-        hd.netmc.cutIndex = ig_md.cutIndex 4 bits;
+        hd.netmc.cutIndex = (bit<4>)ig_md.cutIndex 4 bits;
     }
 
     table add_4bits_table{
@@ -682,68 +502,142 @@ control SwitchIngress(
         default_action = add_4bits_action;
     }
 
+    RegisterAction<bit<16>, _, bit<16>>(count_key_num) update_arrived_key_num = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            reg_value = reg_value + 1;
+            return_value = reg_value;
+        }
+    };
+
+    action update_arrived_key_num_action(){
+        ig_md.count_key_num = update_arrived_key_num.execute(hdr.netmc.id);
+    }
+
+    table update_arrived_key_num_table {
+        actions = {
+            update_arrived_key_num_action;
+        }
+        size = 1;
+        default_action = update_arrived_key_num_action;
+    }
     
+    RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            reg_value = ig_md.req_value;
+        }
+    };
+
+    action put_req_value_action(){
+        //put_req_value.execute(hdr.netmc.cutNum);
+    }
+
+    table put_req_value_table {
+        actions = {
+            put_req_value_action;
+        }
+        size = 1;
+        default_action = put_req_value_action;
+    }
+
+    action drop_cut_idx_action(){
+        hdr.netmc.cutIndex.setInvalid();
+    }
+
+    table drop_cut_idx_table {
+        actions = {
+            drop_cut_idx_action;
+        }
+        size = 1;
+        default_action = drop_cut_idx_action;
+    }
+
+    action set_last_bit_action(){
+        hdr.netmc.cutIndex = hdr.netmc.cutIndex || 0001;
+    }
+
+    table set_last_bit_table {
+        actions = {
+            set_last_bit_action;
+        }
+        size = 1;
+        default_action = set_last_bit_action;
+    }
+
+    action put_req_value_to_pkt_action(){
+        hdr.netmc.values.push_front(hdr.netmc.keyNum);
+        hdr.netmc.values = {ig_md.req_value};
+    }
+
+    table put_req_value_to_pkt_table {
+        actions = {
+            put_req_value_to_pkt_action;
+        }
+        size = 1;
+        default_action = put_req_value_to_pkt_action;
+    }
+
+//1. register 어떻게 넣는지 대충
+//2. header 배열을 스택 형태로 넣어서 pop / push 하는 아이디어...?
+//3. header drop key... -> setInvalid();
+// setInvalid // pop // 접근법 다르게???
 
     apply {
         /*************** NetMC Block START *****************************/
         if(hdr.netmc.isValid()){
-            if(hdr.netmc.op == OP_MULTIGET){
-                if(hdr.netmc.keyNum > 4){
-                    get_cutIdx_table.apply();
-                    get_keyNum_table.apply();
-                    left_shift4_cutIndex_table.apply();
-                    //drop_key_table.apply();
-                    mirror_fwd_table.apply();
+            if(hdr.netmc.op == OP_MULTIGET || hdr.netmc.op == OP_GET){
+                if(hdr.netmc.op == OP_MULTIGET){
+                    if(hdr.netmc.keyNum > 4){
+                        get_cut_idx_table.apply();
+                        get_key_num_table.apply();
+                        left_shift4_cutIndex_table.apply();
+                        drop_key4_table.apply();
+                        mirror_fwd_table.apply(); //
 
-                    right_shiftT4_cutIndex_table.apply(); //
-                    //drop_key_table.apply(); //
-                    add_4bits_table.apply(); //
-                    
-                    if(hdr.netmc.cutIndex % 2 != 1){
-                        //hdr.netmc.cutIndex = hdr.netmc.cutIndex || 0001;
-                    }
-                    assign_keyNum4_table.apply();
-                    //drop_key_table.apply();
-
-                }
-                if(hdr.netmc.keyNum <= 4){
-                    if(hdr.netmc.cutIndex >= 8){
-                        left_shift1_cutIndex_table.apply();
-                        if(hdr.netmc.cutIndex != 0)                    
-                            mirror_fwd_table.apply();
-                        //drop_key_table.apply();
-                        assign_keyNum1_table.apply();
+                        right_shift4_cutIndex_table.apply(); 
+                        drop_cut_idx_table.apply(); 
+                        add_4bits_table.apply(); 
                         
+                        if(hdr.netmc.cutIndex % 2 != 1)
+                            set_last_bit_table.apply();
+                        assign_keyNum4_table.apply();
+                        drop_key4toN_table.apply();
                     }
-                    else if(hdr.netmc.cutIndex >= 4){
-                        left_shift2_cutIndex_table.apply();
-                        if(hdr.netmc.cutIndex != 0)
-                            mirror_fwd_table.apply();
-                        //drop_key_table.apply();
-                        assign_keyNum2_table.apply();
-                    }
-                    else if(hdr.netmc.cutIndex >= 2){
-                        left_shift3_cutIndex_table.apply();
-                        if(hdr.netmc.cutIndex != 0)
-                            mirror_fwd_table.apply();
-                        //drop_key_table.apply();
-                        assign_keyNum3_table.apply();
+                    if(hdr.netmc.keyNum <= 4){
+                        if(hdr.netmc.cutIndex >= 8){
+                            left_shift1_cutIndex_table.apply();
+                            if(hdr.netmc.cutIndex != 0)                    
+                                mirror_fwd_table.apply();
+                            drop_key1toN_table.apply();
+                            assign_keyNum1_table.apply();
+                            
+                        }
+                        else if(hdr.netmc.cutIndex >= 4){
+                            left_shift2_cutIndex_table.apply();
+                            if(hdr.netmc.cutIndex != 0)
+                                mirror_fwd_table.apply();
+                            drop_key2toN_table.apply();
+                            assign_keyNum2_table.apply();
+                        }
+                        else if(hdr.netmc.cutIndex >= 2){
+                            left_shift3_cutIndex_table.apply();
+                            if(hdr.netmc.cutIndex != 0)
+                                mirror_fwd_table.apply();
+                            drop_key_table.apply();     
+                            assign_keyNum3_table.apply();
+                        }
                     }
                 }
-            }
-            if(hdr.netmc.op == OP_GET || hdr.netmc.op == OP_MULTIGET){
                 get_dst_srv_rr_table.apply();
                 get_dst_ip_table.apply();
             }
-            else if(hdr.netmc.op == OP_G_REPLY){
-                ipv4_exact_netmc.apply();
-            }
-            else if(hdr.netmc.op == OP_MG_REPLY){
-                if((hdr.netmc.cutNum - indirect_counter[hdr.netmc.id]) == 1)
-                    //add pkt.value to valueArr[pkt.id][0...pkt.cutNum-2]
-                else{
-                    //valueArr[pkt.id][0...pkt.cutNum-2] = pkt.value
-                    indirect_counter.count(hdr.netmc.id);
+            else if(hdr.netmc.op == OP_G_REPLY || hdr.netmc.op == OP_MG_REPLY){
+                if(hdr.netmc.op == OP_MG_REPLY){
+                    if((hdr.netmc.cutNum - ig_md.count_key_num) == 1)
+                        put_req_value_to_pkt_table.apply();
+                    else{
+                        put_req_value_table.apply(); //
+                        update_arrived_key_num_table.apply();
+                    }
                 }
                 ipv4_exact_netmc.apply();
             }
