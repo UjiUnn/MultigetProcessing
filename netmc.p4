@@ -44,7 +44,7 @@ header netmc_h { // Total 25 bytes actually
     bit<6> cutNum;
     key_h[32] keys;
     value_h[32] values;
-}
+
 
 header ipv4_h {
     bit<4>   version;
@@ -235,7 +235,7 @@ control SwitchIngress(
         default_action = get_dst_srv_rr_action;
     }
 
-    action get_hash_action(){
+   action get_hash_action(){
         ig_md.oid_hash = hdr.netmc.oid%NUM_OBJ;
         //ig_md.oid_hash = hdr.netmc.oid;
     }
@@ -520,7 +520,7 @@ control SwitchIngress(
         size = 1;
         default_action = update_arrived_key_num_action;
     }
-    
+
     RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value = {
         void apply(inout bit<16> reg_value, out bit<16> return_value){
             reg_value = ig_md.req_value;
