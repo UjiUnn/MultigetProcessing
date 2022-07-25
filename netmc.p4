@@ -34,6 +34,7 @@ header netmc_h { // Total 25 bytes actually
     bit<4> cutIndex;
     bit<8> keyNum;
     bit<8> cutNum;
+    bit<8> value;
 }
 
 header ipv4_h {
@@ -81,15 +82,12 @@ struct header_t {
 }
 
 struct metadata_t {
+    bit<16> count_key_num;
+    bit<16> req_value_id;
     bit<16> cutIndex;
     bit<16> keyNum;
     bit<16> num_srv;
-    bit<2> found;
-    bit<32> oid_hash;
-    bit<32> hashtablenum;
     bit<8> DstSrvIdx;
-    bit<32> threshold;
-    bit<2> large;
     bit<1> do_ing_mirroring;  // Enable ingress mirroring
 }
 
@@ -109,17 +107,12 @@ struct empty_metadata_t {
     custom_metadata_t custom_metadata;
 }
 
-Register<bit<32>,_>(NUM_OBJ,0) rset;
-Register<bit<32>,_>(NUM_OBJ,0) rset2;
-Register<bit<32>,_>(NUM_OBJ,0) rset3;
-Register<bit<32>,_>(NUM_OBJ,0) rset4;
+Register<bit<16>,_>(NUM_OBJ,0) count_key_num; //countArr
+Register<bit<16>,_>(NUM_OBJ,0) req_value_id; //valueArr 
 Register<bit<16>,_>(1,0) DstSrvIdx; // result of round robin
 Register<bit<16>,_>(1,0) cutIdx; 
 Register<bit<16>,_>(1,0) keyNum; 
 Register<bit<8>,_>(1,0) num_srv;
-Register<bit<8>,_>(1,0) num_srv_large;
-Register<bit<16>,_>(1,0) threshold;
-Register<bit<32>,_>(1,0) hashtablenum;
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -180,8 +173,6 @@ control SwitchIngress(
         inout ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md,
         inout ingress_intrinsic_metadata_for_tm_t ig_tm_md) {
 
-    Counter<bit<32>, PortId_t>(512, CounterType_t.PACKETS_AND_BYTES) indirect_counter;
-
     action drop() {
         ig_intr_dprsr_md.drop_ctl=1;
     }
@@ -237,89 +228,6 @@ control SwitchIngress(
         }
         size = 1;
         default_action = get_dst_srv_rr_action;
-    }
-
-    RegisterAction<bit<32>, _, bit<32>>(rset) get_rset = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            if (reg_value == hdr.netmc.oid)
-                return_value = 1;
-            else
-                return_value = 0;
-        }
-    };
-
-    action get_rset_action(){
-        ig_md.found = (bit<2>)get_rset.execute(ig_md.oid_hash);
-    }
-    table get_rset_table{
-        actions = {
-            get_rset_action;
-        }
-        size = 1;
-        default_action = get_rset_action;
-    }
-
-    RegisterAction<bit<32>, _, bit<32>>(rset2) get_rset2 = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            if (reg_value == hdr.netmc.oid)
-                return_value = 1;
-            else
-                return_value = 0;
-        }
-    };
-
-    action get_rset2_action(){
-        ig_md.found = (bit<2>)get_rset2.execute(ig_md.oid_hash);
-    }
-
-    table get_rset2_table{
-        actions = {
-            get_rset2_action;
-        }
-        size = 1;
-        default_action = get_rset2_action;
-    }
-
-    RegisterAction<bit<32>, _, bit<32>>(rset3) get_rset3 = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            if (reg_value == hdr.netmc.oid)
-                return_value = 1;
-            else
-                return_value = 0;
-        }
-    };
-
-    action get_rset3_action(){
-        ig_md.found = (bit<2>)get_rset3.execute(ig_md.oid_hash);
-    }
-
-    table get_rset3_table{
-        actions = {
-            get_rset3_action;
-        }
-        size = 1;
-        default_action = get_rset3_action;
-    }
-
-    RegisterAction<bit<32>, _, bit<32>>(rset4) get_rset4 = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            if (reg_value == hdr.netmc.oid)
-                return_value = 1;
-            else
-                return_value = 0;
-        }
-    };
-
-    action get_rset4_action(){
-        ig_md.found = (bit<2>)get_rset4.execute(ig_md.oid_hash);
-    }
-
-    table get_rset4_table{
-        actions = {
-            get_rset4_action;
-        }
-        size = 1;
-        default_action = get_rset4_action;
     }
 
     RegisterAction<bit<32>, _, bit<32>>(rset) put_rset = {
@@ -682,68 +590,104 @@ control SwitchIngress(
         default_action = add_4bits_action;
     }
 
+    RegisterAction<bit<16>, _, bit<16>>(count_key_num) update_arrived_key_num = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            ig_md.count_key_num = ig_md.count_key_num + 1;
+        }
+    };
+
+    action update_arrived_key_num_action(){
+        update_arrived_key_num.execute(0);
+    }
+
+    table update_arrived_key_num_table {
+        actions = {
+            update_arrived_key_num_action;
+        }
+        size = 1;
+        default_action = update_arrived_key_num_action;
+    }
+    
+    RegisterAction<bit<16>, _, bit<16>>(req_value_id) put_req_value = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            ig_md.req_value_id = reg_value;
+        }
+    };
+
+    action put_req_value_action(){
+        put_req_value.execute(hdr.netmc.value);
+    }
+
+    table put_req_value_table {
+        actions = {
+            put_req_value_action;
+        }
+        size = 1;
+        default_action = put_req_value_action;
+    }
+
+
     
 
     apply {
         /*************** NetMC Block START *****************************/
         if(hdr.netmc.isValid()){
-            if(hdr.netmc.op == OP_MULTIGET){
-                if(hdr.netmc.keyNum > 4){
-                    get_cutIdx_table.apply();
-                    get_keyNum_table.apply();
-                    left_shift4_cutIndex_table.apply();
-                    //drop_key_table.apply();
-                    mirror_fwd_table.apply();
-
-                    right_shiftT4_cutIndex_table.apply(); //
-                    //drop_key_table.apply(); //
-                    add_4bits_table.apply(); //
-                    
-                    if(hdr.netmc.cutIndex % 2 != 1){
-                        //hdr.netmc.cutIndex = hdr.netmc.cutIndex || 0001;
-                    }
-                    assign_keyNum4_table.apply();
-                    //drop_key_table.apply();
-
-                }
-                if(hdr.netmc.keyNum <= 4){
-                    if(hdr.netmc.cutIndex >= 8){
-                        left_shift1_cutIndex_table.apply();
-                        if(hdr.netmc.cutIndex != 0)                    
-                            mirror_fwd_table.apply();
+            if(hdr.netmc.op == OP_MULTIGET || hdr.netmc.op == OP_GET){
+                if(hdr.netmc.op == OP_MULTIGET){
+                    if(hdr.netmc.keyNum > 4){
+                        get_cutIdx_table.apply();
+                        get_keyNum_table.apply();
+                        left_shift4_cutIndex_table.apply();
                         //drop_key_table.apply();
-                        assign_keyNum1_table.apply();
+                        mirror_fwd_table.apply();
+
+                        right_shiftT4_cutIndex_table.apply(); //
+                        //drop_key_table.apply(); //
+                        add_4bits_table.apply(); //
                         
-                    }
-                    else if(hdr.netmc.cutIndex >= 4){
-                        left_shift2_cutIndex_table.apply();
-                        if(hdr.netmc.cutIndex != 0)
-                            mirror_fwd_table.apply();
+                        if(hdr.netmc.cutIndex % 2 != 1){
+                            //hdr.netmc.cutIndex = hdr.netmc.cutIndex || 0001;
+                        }
+                        assign_keyNum4_table.apply();
                         //drop_key_table.apply();
-                        assign_keyNum2_table.apply();
+
                     }
-                    else if(hdr.netmc.cutIndex >= 2){
-                        left_shift3_cutIndex_table.apply();
-                        if(hdr.netmc.cutIndex != 0)
-                            mirror_fwd_table.apply();
-                        //drop_key_table.apply();
-                        assign_keyNum3_table.apply();
+                    if(hdr.netmc.keyNum <= 4){
+                        if(hdr.netmc.cutIndex >= 8){
+                            left_shift1_cutIndex_table.apply();
+                            if(hdr.netmc.cutIndex != 0)                    
+                                mirror_fwd_table.apply();
+                            //drop_key_table.apply();
+                            assign_keyNum1_table.apply();
+                            
+                        }
+                        else if(hdr.netmc.cutIndex >= 4){
+                            left_shift2_cutIndex_table.apply();
+                            if(hdr.netmc.cutIndex != 0)
+                                mirror_fwd_table.apply();
+                            //drop_key_table.apply();
+                            assign_keyNum2_table.apply();
+                        }
+                        else if(hdr.netmc.cutIndex >= 2){
+                            left_shift3_cutIndex_table.apply();
+                            if(hdr.netmc.cutIndex != 0)
+                                mirror_fwd_table.apply();
+                            //drop_key_table.apply();
+                            assign_keyNum3_table.apply();
+                        }
                     }
                 }
-            }
-            if(hdr.netmc.op == OP_GET || hdr.netmc.op == OP_MULTIGET){
                 get_dst_srv_rr_table.apply();
                 get_dst_ip_table.apply();
             }
-            else if(hdr.netmc.op == OP_G_REPLY){
-                ipv4_exact_netmc.apply();
-            }
-            else if(hdr.netmc.op == OP_MG_REPLY){
-                if((hdr.netmc.cutNum - indirect_counter[hdr.netmc.id]) == 1)
-                    //add pkt.value to valueArr[pkt.id][0...pkt.cutNum-2]
-                else{
-                    //valueArr[pkt.id][0...pkt.cutNum-2] = pkt.value
-                    indirect_counter.count(hdr.netmc.id);
+            else if(hdr.netmc.op == OP_G_REPLY || hdr.netmc.op == OP_MG_REPLY){
+                if(hdr.netmc.op == OP_MG_REPLY){
+                    if((hdr.netmc.cutNum - ig_md.count_key_num) == 1)
+                        //add pkt.value to valueArr[pkt.id][0...pkt.cutNum-2]
+                    else{
+                        put_req_value_table.apply();
+                        update_arrived_key_num_table.apply();
+                    }
                 }
                 ipv4_exact_netmc.apply();
             }
