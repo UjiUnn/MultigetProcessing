@@ -10,7 +10,7 @@
 #define OP_MG_REPLY 3
 #define MAX_NUM_REPLICA 8
 #define NUM_OBJ 131072
-#define NUM_HASH_TABLE 2 // MUST be 2^n for compile time computation
+#define MAX_KEY 32
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
@@ -39,12 +39,10 @@ header value_h {
 header netmc_h { // Total 25 bytes actually
     bit<2> op;
     bit<8> id;
+    bit<8> keyNum;
+    bit<8> cutNum;
     bit<32> cutIndex;
-    bit<6> keyNum;
-    bit<6> cutNum;
-    key_h[32] keys;
-    value_h[32] values;
-
+}
 
 header ipv4_h {
     bit<4>   version;
@@ -89,15 +87,17 @@ struct header_t {
     tcp_h tcp;
     udp_h udp;
     netmc_h netmc;
+    key_h[MAX_KEY] keys;
+    value_h[MAX_KEY] values;
 }
 
 struct metadata_t {
-    bit<6> count_key_num;
+    bit<8> count_key_num;
+    bit<8> key_num;
+    bit<8> dst_srv_idx;
     bit<16> req_value;
     bit<32> cut_idx;
-    bit<6> key_num;
-    bit<8> dst_srv_idx;
-    bit<1> do_ing_mirroring;  // Enable ingress mirroring
+    bit<2> do_ing_mirroring;  // Enable ingress mirroring
 }
 
 struct custom_metadata_t {
@@ -116,7 +116,7 @@ struct empty_metadata_t {
     custom_metadata_t custom_metadata;
 }
 
-Register<bit<6>,_>(NUM_OBJ,0) count_key_num; //countArr
+Register<bit<8>,_>(NUM_OBJ,0) count_key_num; //countArr 레지스터 최소 8, 최대 32비트
 Register<bit<16>,_>(NUM_OBJ,0) req_value; //valueArr 
 Register<bit<16>,_>(1,0) dst_srv_idx; // result of round robin
 
@@ -213,6 +213,7 @@ control SwitchIngress(
        default_action = drop();
     }
 
+//해시 파티션이라서 라운드 로빈이 아니라 해시를 사용하기, 라운드 로빈은 복제 파티션...
     RegisterAction<bit<16>, _, bit<16>>(DstSrvIdx) get_dst_srv_rr = {
         void apply(inout bit<16> reg_value, out bit<16> return_value) {
             return_value = reg_value;
@@ -247,16 +248,6 @@ control SwitchIngress(
         size = 1;
         default_action = get_hash_action;
     }
-
-    RegisterAction<bit<32>, _, bit<32>>(hashtablenum) get_hashtablenum = {
-        void apply(inout bit<32> reg_value, out bit<32> return_value) {
-            return_value = reg_value;
-            if (reg_value >= NUM_HASH_TABLE -1)
-                reg_value = 0;
-            else
-                reg_value = reg_value + 1;
-        }
-    };
 
     action get_dst_ip_action(bit<32> addr,bit<9> port){
         hdr.ipv4.dstAddr = addr;
@@ -392,7 +383,6 @@ control SwitchIngress(
         size = 1;
         default_action = drop_key4toN_action;
     }
-
 
     action drop_key4_action(){
         hdr.netmc.keys.pop_front(4);
@@ -552,7 +542,7 @@ control SwitchIngress(
     }
 
     action set_last_bit_action(){
-        hdr.netmc.cutIndex = hdr.netmc.cutIndex || 0001;
+        hdr.netmc.cutIndex = hdr.netmc.cutIndex | 1;
     }
 
     table set_last_bit_table {
@@ -609,7 +599,6 @@ control SwitchIngress(
                                 mirror_fwd_table.apply();
                             drop_key1toN_table.apply();
                             assign_keyNum1_table.apply();
-                            
                         }
                         else if(hdr.netmc.cutIndex >= 4){
                             left_shift2_cutIndex_table.apply();
