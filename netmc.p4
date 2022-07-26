@@ -8,7 +8,6 @@
 #define OP_G_REPLY 1
 #define OP_MULTIGET 2
 #define OP_MG_REPLY 3
-#define MAX_NUM_REPLICA 8
 #define NUM_OBJ 131072
 #define MAX_KEY 32
 /*************************************************************************
@@ -37,11 +36,11 @@ header value_h {
 }
 
 header netmc_h { // Total 25 bytes actually
-    bit<2> op;
-    bit<8> id;
-    bit<8> keyNum;
-    bit<8> cutNum;
-    bit<32> cutIndex;
+    bit<2> op; //operator
+    bit<8> id; //request id = packet id
+    bit<8> keyNum; //key 개수, 송유진 학점
+    bit<8> cutNum; //잘리는 패킷의 개수
+    bit<32> cutIndex; //01001 어디서 잘리는지 알려주는 인덱스
 }
 
 header ipv4_h {
@@ -92,11 +91,11 @@ struct header_t {
 }
 
 struct metadata_t {
-    bit<8> count_key_num;
-    bit<8> key_num;
-    bit<8> dst_srv_idx;
-    bit<16> req_value;
-    bit<32> cut_idx;
+    bit<32> cut_idx; //cutidx 저장하는 temp
+    bit<8> key_num; //keynum 저장하는 temp
+    bit<8> count_key_num; //value arr에서 사용하는 counter (패킷이 몇개 왔는지)
+    bit<8> dst_srv_idx; //요청이 어떤 서버로 갈지
+    bit<16> req_value; //요청(서버)에서 오는 value를 저장함, A+
     bit<2> do_ing_mirroring;  // Enable ingress mirroring
 }
 
@@ -118,7 +117,7 @@ struct empty_metadata_t {
 
 Register<bit<8>,_>(NUM_OBJ,0) count_key_num; //countArr 레지스터 최소 8, 최대 32비트
 Register<bit<16>,_>(NUM_OBJ,0) req_value; //valueArr 
-Register<bit<16>,_>(1,0) dst_srv_idx; // result of round robin
+Register<bit<16>,_>(1,0) dst_srv_idx; // result of hash server
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -213,32 +212,22 @@ control SwitchIngress(
        default_action = drop();
     }
 
-//해시 파티션이라서 라운드 로빈이 아니라 해시를 사용하기, 라운드 로빈은 복제 파티션...
-    RegisterAction<bit<16>, _, bit<16>>(DstSrvIdx) get_dst_srv_rr = {
-        void apply(inout bit<16> reg_value, out bit<16> return_value) {
-            return_value = reg_value;
-            if(reg_value >= ig_md.num_srv - 1)
-                reg_value = 0;
-            else
-                reg_value = reg_value + 1;
-        }
-    };
+//해시 파티션이라서 라운드 로빈이 아니라 해시를 사용하기, 라운드 로빈은 복제 파티션... 
 
-    action get_dst_srv_rr_action(){
-        ig_md.dst_srv_idx = (bit<8>)get_dst_srv_rr.execute(0);
+    action get_dst_srv_action(){
+        ig_md.dst_srv_idx = 
     }
 
-    table get_dst_srv_rr_table{
+    table get_dst_srv_table{
         actions = {
-            get_dst_srv_rr_action;
+            get_dst_srv_action;
         }
         size = 1;
-        default_action = get_dst_srv_rr_action;
+        default_action = get_dst_srv_action;
     }
 
    action get_hash_action(){
         ig_md.oid_hash = hdr.netmc.oid%NUM_OBJ;
-        //ig_md.oid_hash = hdr.netmc.oid;
     }
 
     table get_hash_table{
@@ -616,7 +605,7 @@ control SwitchIngress(
                         }
                     }
                 }
-                get_dst_srv_rr_table.apply();
+                get_dst_srv_table.apply();
                 get_dst_ip_table.apply();
             }
             else if(hdr.netmc.op == OP_G_REPLY || hdr.netmc.op == OP_MG_REPLY){
