@@ -44,7 +44,6 @@ header value_h {
 
 header netmc_h { // Total 25 bytes actually
     bit<2> op; //operator
-    bit<2> isClone; 
     bit<8> id; //request id = packet id
     bit<8> keyNum; //key 개수, 송유진 학점
     bit<8> cutNum; //잘리는 패킷의 개수
@@ -273,7 +272,7 @@ control SwitchIngress(
         size = 1;
         default_action = left_shift1_cutIndex_action;
     }
-
+/*
     action mirror_fwd_action(PortId_t dest_port, bit<1> ing_mir, MirrorId_t ing_ses, bit<1> egr_mir, MirrorId_t egr_ses) {
         ig_tm_md.ucast_egress_port = dest_port;
         ig_md.do_ing_mirroring = ing_mir;
@@ -291,10 +290,10 @@ control SwitchIngress(
         }
         size = 512;
         default_action = mirror_fwd_action;
-    }
+    }*/
 
     action drop_key_action(){
-        hdr.netmc.keys.pop();
+        hdr.netmc.keys.pop(hdr.netmc.keyNum);
     }
 
     table drop_key_table {
@@ -304,6 +303,19 @@ control SwitchIngress(
         size = 1;
         default_action = drop_key_action;
     }
+
+    action drop_clone_key_action(){
+        hdr.netmc.keys.pop_front(4);
+    }
+
+    table drop_clone_key_table {
+        actions = {
+            drop_key_action;
+        }
+        size = 1;
+        default_action = drop_key_action;
+    }
+
 
     action get_cut_idx_action(){
         ig_md.cut_idx = hdr.netmc.cutIndex;
@@ -319,6 +331,8 @@ control SwitchIngress(
 
     action get_keyNum_action(){
         ig_md.key_num = hdr.netmc.keyNum;
+        ig_md.cutIndex = hdr.netmc.cutIndex;
+        hdr.netmc.shiftNum = 4;
     }
 
     table get_keyNum_table {
@@ -329,11 +343,21 @@ control SwitchIngress(
         default_action = get_keyNum_action;
     }
 
+    action assign_clone_keyNum_action(){
+        ig_md.num_temp = hdr.netmc.keyNum - hdr.netmc.shiftNum;
+        hdr.netmc.keyNum = ig_md.num_temp;
+    }
+
+    table assign_clone_keyNum_table {
+        actions = {
+            assign_clone_keyNum_action;
+        }
+        size = 1;
+        default_action = assign_clone_keyNum_action;
+    }
+
     action assign_keyNum_action(){
-        if(hdr.netmc.isClone)
-            ig_md.num_temp = hdr.netmc.keyNum - hdr.netmc.shiftNum;
-        else
-            ig_md.num_temp = hdr.netmc.shiftNum;
+        ig_md.num_temp = hdr.netmc.shiftNum;
         hdr.netmc.keyNum = ig_md.num_temp;
     }
 
@@ -345,16 +369,16 @@ control SwitchIngress(
         default_action = assign_keyNum_action;
     }
 
-    action right_shift4_cutIndex_action(){
-        ig_md.cutIndex = ig_md.cutIndex >> (ig_md.keyNum - 4);
+    action right_shift_cutIndex_action(){
+        hdr.netmc.cutIndex = ig_md.cutIndex >> (ig_md.keyNum - 4);
     }
 
-    table right_shift4_cutIndex_table{
+    table right_shift_cutIndex_table{
         actions = {
-            right_shift4_cutIndex_action;
+            right_shift_cutIndex_action;
         }
         size = 1;
-        default_action = right_shift4_cutIndex_action;
+        default_action = right_shift_cutIndex_action;
     }
 
     RegisterAction<bit<16>, _, bit<16>>(count_key_num) update_arrived_key_num = {
@@ -406,9 +430,15 @@ control SwitchIngress(
         default_action = set_last_bit_action;
     }
 
+    RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value_to_pkt = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            hdr.values.push_front(hdr.netmc.keyNum);
+            hdr.values = reg_value;
+        }
+    };
+
     action put_req_value_to_pkt_action(){
-        hdr.netmc.values.push_front(hdr.netmc.keyNum);
-        hdr.netmc.values = {ig_md.req_value};
+        put_req_value_to_pkt.execute(hdr.netmc.id);
     }
 
     table put_req_value_to_pkt_table {
@@ -429,30 +459,6 @@ control SwitchIngress(
         }
         size = 1;
         default_action = check_last_pkt_action;
-    }
-
-    action set_clone_action(){
-        hdr.netmc.isClone = 1;
-    }
-
-    table set_clone_table {
-        actions = {
-            set_clone_action;
-        }
-        size = 1;
-        default_action = set_clone_action;
-    }
-
-    action set_not_clone_action(){
-        hdr.netmc.isClone = 0;
-    }
-
-    table set_not_clone_table {
-        actions = {
-            set_not_clone_action;
-        }
-        size = 1;
-        default_action = set_not_clone_action;
     }
 
     action set_shiftNum_action(){
@@ -501,27 +507,26 @@ control SwitchIngress(
                     if(hdr.netmc.keyNum > 4){ //
                         get_key_num_table.apply();
                         left_shift_cutIndex_table.apply();
-                        drop_key4_table.apply();
-                        mirror_fwd_table.apply(); // -> do_clone_table.apply(); !!
-                        right_shift4_cutIndex_table.apply(); 
-                        
-                        if(hdr.netmc.cutIndex % 2 != 1)
+                        assign_clone_keyNum_table.apply();
+                        drop_clone_key_table.apply();
+                        do_clone_table.apply();
+
+                        right_shift_cutIndex_table.apply(); 
+                        if(hdr.netmc.cutIndex & 1)
                             set_last_bit_table.apply();
+                        drop_key_table.apply();
                         assign_keyNum_table.apply();
-                        drop_key4toN_table.apply();
                     }
                     if(hdr.netmc.keyNum <= 4){
                         set_shiftNum_table.apply();
                         if(hdr.netmc.shiftNum != 0){
                             left_shift_cutIndex_table.apply();
                             if(hdr.netmc.cutIndex != 0){  
-                                set_clone_table.apply(); //
-                                assign_keyNum_table.apply(); //
-                                mirror_fwd_table.apply(); //
+                                assign_clone_keyNum_table.apply(); 
+                                do_clone_table.apply(); //
                             }
-                            set_not_clone_table.apply(); //
-                            drop_key_table.apply(); //
-                            assign_keyNum_table.apply(); //
+                            drop_key_table.apply(); 
+                            assign_keyNum_table.apply(); 
                         }
                     }
                 }
