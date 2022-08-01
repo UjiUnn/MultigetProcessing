@@ -99,6 +99,11 @@ struct header_t {
     value_h[MAX_KEY] values;
 }
 
+header clone_i2e_metadata_t { // clone ingress to egress !!
+    bit<8>custom_tag;
+    EthernetAddress srcAddr;
+}
+
 struct metadata_t {
     bit<32> cut_idx; //cutidx 저장하는 temp
     bit<8> key_num; //keynum 저장하는 temp
@@ -125,6 +130,8 @@ struct empty_header_t {
 struct empty_metadata_t {
     custom_metadata_t custom_metadata;
 }
+
+
 
 Register<bit<8>,_>(NUM_OBJ,0) count_key_num; //countArr 레지스터 최소 8, 최대 32비트
 Register<bit<16>,_>(NUM_OBJ,0) req_value; //valueArr 
@@ -180,14 +187,16 @@ parser SwitchIngressParser(
 /*************************************************************************
 **************  I N G R E S S   P R O C E S S I N G   *******************
 *************************************************************************/
-
 control SwitchIngress(
         inout header_t hdr,
         inout metadata_t ig_md,
         in ingress_intrinsic_metadata_t ig_intr_md,
         in ingress_intrinsic_metadata_from_parser_t ig_intr_prsr_md,
         inout ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md,
-        inout ingress_intrinsic_metadata_for_tm_t ig_tm_md) {
+        inout ingress_intrinsic_metadata_for_tm_t ig_tm_md,
+        in  psa_ingress_input_metadata_t  istd, // clone 시 istd !!
+        inout psa_ingress_output_metadata_t ostd) // clone 시 ostd !!
+{
 
     action drop() {
         ig_intr_dprsr_md.drop_ctl=1;
@@ -330,10 +339,10 @@ control SwitchIngress(
 
     table assign_keyNum_table {
         actions = {
-            assign_keyNum1_action;
+            assign_keyNum_action;
         }
         size = 1;
-        default_action = assign_keyNum1_action;
+        default_action = assign_keyNum_action;
     }
 
     action right_shift4_cutIndex_action(){
@@ -465,6 +474,20 @@ control SwitchIngress(
         default_action = set_shiftNum_action;
     }
 
+    // 복제 과정 !!
+    action do_clone_action (CloneSessionId_t session_id) { // 
+        ostd.clone = true;
+        ostd.clone_session_id = session_id;
+        id_md.custom_clone_id = 1;
+    }
+    table do_clone_table {
+        key = {
+            id_md.fwd_metadata.outport : exact;
+        }
+        actions = { do_clone_action; }
+    }
+
+
 //1. register 어떻게 넣는지 대충
 //2. header 배열을 스택 형태로 넣어서 pop / push 하는 아이디어...?
 //3. header drop key... -> setInvalid();
@@ -479,7 +502,7 @@ control SwitchIngress(
                         get_key_num_table.apply();
                         left_shift_cutIndex_table.apply();
                         drop_key4_table.apply();
-                        mirror_fwd_table.apply(); 
+                        mirror_fwd_table.apply(); // -> do_clone_table.apply(); !!
                         right_shift4_cutIndex_table.apply(); 
                         
                         if(hdr.netmc.cutIndex % 2 != 1)
@@ -531,9 +554,23 @@ control SwitchIngressDeparser(
         packet_out pkt,
         inout header_t hdr,
         in metadata_t ig_md,
-        in ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md) {
+        in ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md,
+        out clone_i2e_metadata_t clone_i2e_meta, // 수정 !!
+        out empty_metadata_t resubmit_meta, // 수정 !!
+        out metadata normal_meta, // 수정 !!
+        in psa_ingress_output_metadata_t istd) { // 수정 !!
+    
+    DeparserImpl() common_deparser;
+
     apply {
-        pkt.emit(hdr);
+        if (psa_clone_i2e(istd)) {
+            clone_i2e_meta.custom_tag = (bit<8>) ig_md.custom_clone_id;
+            if (ig_md.custom_clone_id == 1) {
+                clone_i2e_meta.srcAddr = hdr.ethernet.srcAddr;
+            }
+        }
+        common_deparser.apply(packet, hdr);
+        pkt.emit(hdr); // 원래는 이 코드 하나만 apply 안에 있었음
     }
 }
 
