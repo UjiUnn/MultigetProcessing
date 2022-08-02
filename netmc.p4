@@ -43,12 +43,12 @@ header value_h {
 }
 
 header netmc_h { // Total 25 bytes actually
-    bit<2> op; //operator
+    bit<8> op; //operator
     bit<8> id; //request id = packet id
-    bit<8> keyNum; //key 개수, 송유진 학점
-    bit<8> cutNum; //잘리는 패킷의 개수
+    bit<16> keyNum; //key 개수, 송유진 학점
+    bit<16> cutNum; //잘리는 패킷의 개수
+    bit<16> shiftNum; //얼마나 shift할지 알려줌(계속 변동)
     bit<32> cutIndex; //01001 어디서 잘리는지 알려주는 인덱스
-    bit<32> shiftNum; //얼마나 shift할지 알려줌(계속 변동)
 }
 
 header ipv4_h {
@@ -98,20 +98,22 @@ struct header_t {
     value_h[MAX_KEY] values;
 }
 
+/*
 header clone_i2e_metadata_t { // clone ingress to egress !!
     bit<8>custom_tag;
-    EthernetAddress srcAddr;
+    bit<16> srcAddr;
 }
+*/
 
 struct metadata_t {
-    bit<32> cut_idx; //cutidx 저장하는 temp
-    bit<8> key_num; //keynum 저장하는 temp
-    bit<8> num_temp; //pkt에 keynum을 할당해줄 때 사용하는 temp
-    bit<8> count_key_num; //value arr에서 사용하는 counter (패킷이 몇개 왔는지)
-    bit<8> dst_srv_idx; //요청이 어떤 서버로 갈지
-    bit<16> req_value; //요청(서버)에서 오는 value를 저장함, A+
     bit<2> do_ing_mirroring;  // Enable ingress mirroring
-    bit<2> last_pkt; // last packet
+    bit<8> dst_srv_idx; //요청이 어떤 서버로 갈지
+    bit<32> cut_idx; //cutidx 저장하는 temp
+    bit<16> key_num; //keynum 저장하는 temp
+    bit<16> num_temp; //pkt에 keynum을 할당해줄 때 사용하는 temp
+    bit<16> count_key_num; //value arr에서 사용하는 counter (패킷이 몇개 왔는지)
+    bit<16> req_value; //요청(서버)에서 오는 value를 저장함, A+
+    bit<16> last_pkt; // last packet
 }
 
 struct custom_metadata_t {
@@ -129,8 +131,6 @@ struct empty_header_t {
 struct empty_metadata_t {
     custom_metadata_t custom_metadata;
 }
-
-
 
 Register<bit<8>,_>(NUM_OBJ,0) count_key_num; //countArr 레지스터 최소 8, 최대 32비트
 Register<bit<16>,_>(NUM_OBJ,0) req_value; //valueArr 
@@ -192,9 +192,9 @@ control SwitchIngress(
         in ingress_intrinsic_metadata_t ig_intr_md,
         in ingress_intrinsic_metadata_from_parser_t ig_intr_prsr_md,
         inout ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md,
-        inout ingress_intrinsic_metadata_for_tm_t ig_tm_md,
-        in  psa_ingress_input_metadata_t  istd, // clone 시 istd !!
-        inout psa_ingress_output_metadata_t ostd) // clone 시 ostd !!
+        inout ingress_intrinsic_metadata_for_tm_t ig_tm_md)
+        //in  psa_ingress_input_metadata_t  istd, // clone 시 istd !!
+        //inout psa_ingress_output_metadata_t ostd) // clone 시 ostd !!
 {
 
     action drop() {
@@ -234,7 +234,7 @@ control SwitchIngress(
 //해시 파티션이라서 라운드 로빈이 아니라 해시를 사용하기, 라운드 로빈은 복제 파티션... 
 
     action get_dst_srv_action(){
-        ig_md.dst_srv_idx = hdr.keys[0]%NUM_SRV;
+        //ig_md.dst_srv_idx = hdr.keys%NUM_SRV;
     }
 
     table get_dst_srv_table{
@@ -267,10 +267,10 @@ control SwitchIngress(
 
     table left_shift_cutIndex_table{
         actions = {
-            left_shift1_cutIndex_action;
+            left_shift_cutIndex_action;
         }
         size = 1;
-        default_action = left_shift1_cutIndex_action;
+        default_action = left_shift_cutIndex_action;
     }
 /*
     action mirror_fwd_action(PortId_t dest_port, bit<1> ing_mir, MirrorId_t ing_ses, bit<1> egr_mir, MirrorId_t egr_ses) {
@@ -293,7 +293,7 @@ control SwitchIngress(
     }*/
 
     action drop_key_action(){
-        hdr.netmc.keys.pop(hdr.netmc.keyNum);
+        //hdr.keys.pop(hdr.netmc.keyNum);
     }
 
     table drop_key_table {
@@ -305,7 +305,7 @@ control SwitchIngress(
     }
 
     action drop_clone_key_action(){
-        hdr.netmc.keys.pop_front(4);
+        hdr.keys.pop_front(4);
     }
 
     table drop_clone_key_table {
@@ -331,8 +331,7 @@ control SwitchIngress(
 
     action get_keyNum_action(){
         ig_md.key_num = hdr.netmc.keyNum;
-        ig_md.cutIndex = hdr.netmc.cutIndex;
-        hdr.netmc.shiftNum = 4;
+        ig_md.cut_idx = hdr.netmc.cutIndex;
     }
 
     table get_keyNum_table {
@@ -370,7 +369,7 @@ control SwitchIngress(
     }
 
     action right_shift_cutIndex_action(){
-        hdr.netmc.cutIndex = ig_md.cutIndex >> (ig_md.keyNum - 4);
+        hdr.netmc.cutIndex = ig_md.cut_idx >> (ig_md.key_num - 4);
     }
 
     table right_shift_cutIndex_table{
@@ -432,8 +431,8 @@ control SwitchIngress(
 
     RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value_to_pkt = {
         void apply(inout bit<16> reg_value, out bit<16> return_value){
-            hdr.values.push_front(hdr.netmc.keyNum);
-            hdr.values = reg_value;
+            //hdr.values.push_front(hdr.netmc.keyNum);
+            //hdr.values = reg_value;
         }
     };
 
@@ -462,11 +461,13 @@ control SwitchIngress(
     }
 
     action set_shiftNum_action(){
-        if(hdr.netmc.cutIndex & 8)
+        if(hdr.netmc.keyNum > 4)
+            hdr.netmc.shiftNum = 4;
+        else if((hdr.netmc.cutIndex & 8) == 1)
             hdr.netmc.shiftNum = 1;
-        else if(hdr.netmc.cutIndex & 4)
+        else if((hdr.netmc.cutIndex & 4) == 1)
             hdr.netmc.shiftNum = 2;
-        else if(hdr.netmc.cutIndex & 2)
+        else if((hdr.netmc.cutIndex & 2) == 1)
             hdr.netmc.shiftNum = 3;
         else
             hdr.netmc.shiftNum = 0;
@@ -479,7 +480,7 @@ control SwitchIngress(
         size = 1;
         default_action = set_shiftNum_action;
     }
-
+/*
     // 복제 과정 !!
     action do_clone_action (CloneSessionId_t session_id) { // 
         ostd.clone = true;
@@ -492,11 +493,9 @@ control SwitchIngress(
         }
         actions = { do_clone_action; }
     }
+*/
 
-
-//1. register 어떻게 넣는지 대충
 //2. header 배열을 스택 형태로 넣어서 pop / push 하는 아이디어...?
-//3. header drop key... -> setInvalid();
 // setInvalid // pop // 접근법 다르게???
 
     apply {
@@ -504,26 +503,25 @@ control SwitchIngress(
         if(hdr.netmc.isValid()){
             if(hdr.netmc.op == OP_MULTIGET || hdr.netmc.op == OP_GET){
                 if(hdr.netmc.op == OP_MULTIGET){
-                    if(hdr.netmc.keyNum > 4){ //
-                        get_key_num_table.apply();
+                    set_shiftNum_table.apply();
+                    if(hdr.netmc.keyNum > 4){ 
+                        get_keyNum_table.apply(); //replicated
                         left_shift_cutIndex_table.apply();
                         assign_clone_keyNum_table.apply();
                         drop_clone_key_table.apply();
-                        do_clone_table.apply();
-
-                        right_shift_cutIndex_table.apply(); 
-                        if(hdr.netmc.cutIndex & 1)
+                        //do_clone_table.apply();
+                        right_shift_cutIndex_table.apply(); //original
+                        if((hdr.netmc.cutIndex & 1) == 1)
                             set_last_bit_table.apply();
                         drop_key_table.apply();
                         assign_keyNum_table.apply();
                     }
                     if(hdr.netmc.keyNum <= 4){
-                        set_shiftNum_table.apply();
                         if(hdr.netmc.shiftNum != 0){
                             left_shift_cutIndex_table.apply();
                             if(hdr.netmc.cutIndex != 0){  
                                 assign_clone_keyNum_table.apply(); 
-                                do_clone_table.apply(); //
+                                //do_clone_table.apply(); 
                             }
                             drop_key_table.apply(); 
                             assign_keyNum_table.apply(); 
@@ -551,7 +549,6 @@ control SwitchIngress(
     }
 }
 
-
 /*************************************************************************
 ***********************  D E P A R S E R  *******************************
 *************************************************************************/
@@ -559,22 +556,22 @@ control SwitchIngressDeparser(
         packet_out pkt,
         inout header_t hdr,
         in metadata_t ig_md,
-        in ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md,
-        out clone_i2e_metadata_t clone_i2e_meta, // 수정 !!
-        out empty_metadata_t resubmit_meta, // 수정 !!
-        out metadata normal_meta, // 수정 !!
-        in psa_ingress_output_metadata_t istd) { // 수정 !!
+        in ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md) {
+        //out clone_i2e_metadata_t clone_i2e_meta, // 수정 !!
+        //out empty_metadata_t resubmit_meta, // 수정 !!
+        //out metadata normal_meta, // 수정 !!
+        //in psa_ingress_output_metadata_t istd) { // 수정 !!
     
-    DeparserImpl() common_deparser;
+    //DeparserImpl() common_deparser;
 
-    apply {
+    apply {/*
         if (psa_clone_i2e(istd)) {
             clone_i2e_meta.custom_tag = (bit<8>) ig_md.custom_clone_id;
             if (ig_md.custom_clone_id == 1) {
                 clone_i2e_meta.srcAddr = hdr.ethernet.srcAddr;
             }
         }
-        common_deparser.apply(packet, hdr);
+        common_deparser.apply(packet, hdr);*/
         pkt.emit(hdr); // 원래는 이 코드 하나만 apply 안에 있었음
     }
 }
