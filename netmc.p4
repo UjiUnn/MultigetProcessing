@@ -110,10 +110,11 @@ struct metadata_t {
     bit<8> dst_srv_idx; //요청이 어떤 서버로 갈지
     bit<32> cut_idx; //cutidx 저장하는 temp
     bit<16> key_num; //keynum 저장하는 temp
-    bit<16> num_temp; //pkt에 keynum을 할당해줄 때 사용하는 temp
+    bit<16> num_temp; //value arr에서 사용하는 counter (패킷이 몇개 왔는지)
     bit<16> count_key_num; //value arr에서 사용하는 counter (패킷이 몇개 왔는지)
     bit<16> req_value; //요청(서버)에서 오는 value를 저장함, A+
     bit<16> last_pkt; // last packet
+    bit<1> chk_keyNum; // last packet
 }
 
 struct custom_metadata_t {
@@ -232,7 +233,6 @@ control SwitchIngress(
     }
 
 //해시 파티션이라서 라운드 로빈이 아니라 해시를 사용하기, 라운드 로빈은 복제 파티션... 
-
     action get_dst_srv_action(){
         //ig_md.dst_srv_idx = hdr.keys%NUM_SRV;
     }
@@ -245,7 +245,7 @@ control SwitchIngress(
         default_action = get_dst_srv_action;
     }
 
-    action get_dst_ip_action(bit<32> addr,bit<9> port){
+    action get_dst_ip_action(bit<32> addr, bit<9> port){
         hdr.ipv4.dstAddr = addr;
         ig_tm_md.ucast_egress_port = port;
     }
@@ -262,7 +262,7 @@ control SwitchIngress(
     }
 
     action left_shift_cutIndex_action(){
-        hdr.netmc.cutIndex = hdr.netmc.cutIndex << hdr.netmc.shiftNum;
+        //hdr.netmc.cutIndex = hdr.netmc.cutIndex << hdr.netmc.shiftNum; const
     }
 
     table left_shift_cutIndex_table{
@@ -293,7 +293,7 @@ control SwitchIngress(
     }*/
 
     action drop_key_action(){
-        //hdr.keys.pop(hdr.netmc.keyNum);
+        //hdr.keys.pop(hdr.netmc.keyNum); const
     }
 
     table drop_key_table {
@@ -342,34 +342,46 @@ control SwitchIngress(
         default_action = get_keyNum_action;
     }
 
-    action assign_clone_keyNum_action(){
-        ig_md.num_temp = hdr.netmc.keyNum - hdr.netmc.shiftNum;
-        hdr.netmc.keyNum = ig_md.num_temp;
+    action update_clone_keyNum_action(){
+        hdr.netmc.keyNum = hdr.netmc.keyNum - hdr.netmc.shiftNum;
     }
 
-    table assign_clone_keyNum_table {
+    table update_clone_keyNum_table {
         actions = {
-            assign_clone_keyNum_action;
+            update_clone_keyNum_action;
         }
         size = 1;
-        default_action = assign_clone_keyNum_action;
+        default_action = update_clone_keyNum_action;
     }
 
-    action assign_keyNum_action(){
-        ig_md.num_temp = hdr.netmc.shiftNum;
-        hdr.netmc.keyNum = ig_md.num_temp;
+    action update_keyNum1_action(){
+        hdr.netmc.keyNum = hdr.netmc.shiftNum;
     }
 
-    table assign_keyNum_table {
+    table update_keyNum1_table {
         actions = {
-            assign_keyNum_action;
+            update_keyNum1_action;
         }
         size = 1;
-        default_action = assign_keyNum_action;
+        default_action = update_keyNum1_action;
     }
+
+    action update_keyNum2_action(){
+        hdr.netmc.keyNum = hdr.netmc.shiftNum;
+    }
+
+    table update_keyNum2_table {
+        actions = {
+            update_keyNum2_action;
+        }
+        size = 1;
+        default_action = update_keyNum2_action;
+    }
+
 
     action right_shift_cutIndex_action(){
-        hdr.netmc.cutIndex = ig_md.cut_idx >> (ig_md.key_num - 4);
+        ig_md.num_temp = ig_md.key_num - 4;
+        //hdr.netmc.cutIndex = ig_md.cut_idx >> ig_md.num_temp; const
     }
 
     table right_shift_cutIndex_table{
@@ -398,10 +410,10 @@ control SwitchIngress(
         size = 1;
         default_action = update_arrived_key_num_action;
     }
-
+/*
     RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value = {
         void apply(inout bit<16> reg_value, out bit<16> return_value){
-            reg_value = ig_md.req_value;
+            reg_value = ig_md.req_value; //왜인지 모르는 오류
         }
     };
 
@@ -415,7 +427,7 @@ control SwitchIngress(
         }
         size = 1;
         default_action = put_req_value_action;
-    }
+    }*/
 
     action set_last_bit_action(){
         hdr.netmc.cutIndex = hdr.netmc.cutIndex | 1;
@@ -429,8 +441,9 @@ control SwitchIngress(
         default_action = set_last_bit_action;
     }
 
-    RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value_to_pkt = {
+    RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value_to_pkt = {//
         void apply(inout bit<16> reg_value, out bit<16> return_value){
+            return_value = reg_value; //다시 구현
             //hdr.values.push_front(hdr.netmc.keyNum);
             //hdr.values = reg_value;
         }
@@ -460,16 +473,31 @@ control SwitchIngress(
         default_action = check_last_pkt_action;
     }
 
+    action check_keyNum_action(){
+        /*if(hdr.netmc.keyNum > 4)
+            ig_md.chk_keyNum = 1;
+        else*/
+            ig_md.chk_keyNum = 0;
+    }
+
+    table check_keyNum_table {
+        actions = {
+            check_keyNum_action;
+        }
+        size = 1;
+        default_action = check_keyNum_action;
+    }
+
     action set_shiftNum_action(){
         if(hdr.netmc.keyNum > 4)
-            hdr.netmc.shiftNum = 4;
+            hdr.netmc.shiftNum = 4;/*
         else if((hdr.netmc.cutIndex & 8) == 1)
             hdr.netmc.shiftNum = 1;
         else if((hdr.netmc.cutIndex & 4) == 1)
             hdr.netmc.shiftNum = 2;
         else if((hdr.netmc.cutIndex & 2) == 1)
-            hdr.netmc.shiftNum = 3;
-        else
+            hdr.netmc.shiftNum = 3;*/
+        //else
             hdr.netmc.shiftNum = 0;
     }
 
@@ -495,36 +523,34 @@ control SwitchIngress(
     }
 */
 
-//2. header 배열을 스택 형태로 넣어서 pop / push 하는 아이디어...?
-// setInvalid // pop // 접근법 다르게???
-
     apply {
         /*************** NetMC Block START *****************************/
         if(hdr.netmc.isValid()){
             if(hdr.netmc.op == OP_MULTIGET || hdr.netmc.op == OP_GET){
                 if(hdr.netmc.op == OP_MULTIGET){
                     set_shiftNum_table.apply();
-                    if(hdr.netmc.keyNum > 4){ 
-                        get_keyNum_table.apply(); //replicated
+                    check_keyNum_table.apply();
+                    if(hdr.netmc.shiftNum != 0){
                         left_shift_cutIndex_table.apply();
-                        assign_clone_keyNum_table.apply();
+                        update_clone_keyNum_table.apply();
+                    }
+                    if(ig_md.chk_keyNum == 1){ 
+                        get_keyNum_table.apply(); //replicated
                         drop_clone_key_table.apply();
                         //do_clone_table.apply();
                         right_shift_cutIndex_table.apply(); //original
                         if((hdr.netmc.cutIndex & 1) == 1)
                             set_last_bit_table.apply();
-                        drop_key_table.apply();
-                        assign_keyNum_table.apply();
+                        //drop_key_table.apply();
+                        update_keyNum1_table.apply();
                     }
-                    if(hdr.netmc.keyNum <= 4){
-                        if(hdr.netmc.shiftNum != 0){
-                            left_shift_cutIndex_table.apply();
-                            if(hdr.netmc.cutIndex != 0){  
-                                assign_clone_keyNum_table.apply(); 
+                    if(ig_md.chk_keyNum == 0){
+                        if(hdr.netmc.shiftNum != 0){/*
+                            if(hdr.netmc.cutIndex != 0)
                                 //do_clone_table.apply(); 
-                            }
-                            drop_key_table.apply(); 
-                            assign_keyNum_table.apply(); 
+                            */
+                            //drop_key_table.apply(); 
+                            update_keyNum2_table.apply();
                         }
                     }
                 }
@@ -537,7 +563,7 @@ control SwitchIngress(
                     if(ig_md.last_pkt == 1)
                         put_req_value_to_pkt_table.apply(); //
                     else{
-                        put_req_value_table.apply(); //
+                        //put_req_value_table.apply(); //
                         update_arrived_key_num_table.apply();
                     }
                 }
@@ -623,3 +649,15 @@ Pipeline(SwitchIngressParser(),
          SwitchEgressDeparser()) pipe;
 
 Switch(pipe) main;
+
+//해야할 것
+//1. clone 구현
+//2. 변수가 아닌 constant로 바꿔야 하는 것들 push/pop/shift 연산들
+// =>  left_shift_cutIndex_action, drop_key_action, right_shift_cutIndex_action
+//3. drop_key_table 배치 위치... => mutally exclusive 떠서 모든 테이블을 한번씩만 사용해야함
+//4.  update keynum -> 얘도 한번만 사용해야하는디 야매로 1/2 이렇게 나눠놓긴 함
+//5. put_req_value -> 알 수 없는 오류, apply에서 오류가 난다고 함
+// put_req_value_to_pkt -> 로직 재구현
+// set_shiftNum_action -> 조건이 복잡하다고 함,, 교수님 말씀처럼 if-else만 사용 가능한듯
+// get_dst_srv_action -> 해쉬값 맞춰서 재구현
+// chk_keyNum -> 애가 a>4 를 인식못함... 아마 4를 계산하는 것이 복잡한 계산인가봄
