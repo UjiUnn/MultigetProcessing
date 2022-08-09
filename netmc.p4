@@ -526,10 +526,9 @@ control SwitchIngress(
     }
 
     action check_keyNum_action(){
-        /*if(hdr.netmc.keyNum > 4)
+        if(hdr.netmc.keyNum > 4)
             ig_md.chk_keyNum = 1;
-        else*/
-            ig_md.chk_keyNum = 0;
+        ig_md.chk_keyNum = 0;
     }
 
     table check_keyNum_table {
@@ -540,9 +539,17 @@ control SwitchIngress(
         default_action = check_keyNum_action;
     }
 
+    action is_keyNum4_action(){
+        hdr.netmc.keyNum = hdr.netmc.keyNum - 4;
+    }
+
+    
+
     action set_shiftNum_action(){
+        // if(hdr.netmc.keyNum > 4)
+            hdr.netmc.shiftNum = 0;
         //if(hdr.netmc.keyNum > 4)
-            hdr.netmc.shiftNum = 4;
+            // hdr.netmc.shiftNum = 4;
         //else
             //set_shiftNum_action2();
     }
