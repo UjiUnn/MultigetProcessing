@@ -115,7 +115,9 @@ struct metadata_t {
     bit<16> count_key_num; //value arr에서 사용하는 counter (패킷이 몇개 왔는지)
     bit<16> req_value; //요청(서버)에서 오는 value를 저장함, A+
     bit<16> last_pkt; // last packet
-    bit<1> chk_keyNum; // last packet
+    bit<32> initial_key_num; 
+    bit<16> count_invalid; 
+    bit<1> chk_keyNum; 
 }
 
 struct custom_metadata_t {
@@ -137,6 +139,8 @@ struct empty_metadata_t {
 Register<bit<8>,_>(NUM_OBJ,0) count_key_num; //countArr 레지스터 최소 8, 최대 32비트
 Register<bit<16>,_>(NUM_OBJ,0) req_value; //valueArr 
 Register<bit<16>,_>(1,0) dst_srv_idx; // result of hash server
+Register<bit<16>,_>(1,0) count_invalid;
+Register<bit<32>,_>(1,0) initial_key_num;
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -283,6 +287,24 @@ control SwitchIngress(
         size = 1;
         default_action = left_shift_cutIndex_action;
     }
+    
+    RegisterAction<bit<32>, _, bit<32>>(initial_key_num) set_initial_key_num = {
+        void apply(inout bit<32> reg_value, out bit<32> return_value){
+            reg_value = hdr.netmc.keyNum;
+        }
+    };
+
+    action set_initial_key_num_action(){   
+        set_initial_key_num.execute(0);    
+    }
+
+    table set_initial_key_num_table {
+        actions = {
+            set_initial_key_num_action;
+        }
+        size = 1;
+        default_action = set_initial_key_num_action;
+    }
 /*
     action mirror_fwd_action(PortId_t dest_port, bit<1> ing_mir, MirrorId_t ing_ses, bit<1> egr_mir, MirrorId_t egr_ses) {
         ig_tm_md.ucast_egress_port = dest_port;
@@ -302,9 +324,16 @@ control SwitchIngress(
         size = 512;
         default_action = mirror_fwd_action;
     }*/
+    
+    RegisterAction<bit<16>, _, bit<16>>(count_key_num) drop_key = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            return_value = reg_value;
+        }
+    };
 
-    action drop_key1_action(){       
-        hdr.keys[0].setInvalid();
+    action drop_key1_action(){   
+        ig_md.count_invalid = drop_key.execute(0);    
+        hdr.keys[ig_md.count_invalid].setInvalid();
     }
 
     table drop_key1_table {
@@ -316,8 +345,9 @@ control SwitchIngress(
     }
 
     action drop_key2_action(){
-        hdr.keys[0].setInvalid();
-        hdr.keys[1].setInvalid();
+        ig_md.count_invalid = drop_key.execute(0);    
+        hdr.keys[ig_md.count_invalid].setInvalid();
+        hdr.keys[ig_md.count_invalid+1].setInvalid();
     }
 
     table drop_key2_table {
@@ -329,9 +359,10 @@ control SwitchIngress(
     }
 
     action drop_key3_action(){
-        hdr.keys[0].setInvalid();
-        hdr.keys[1].setInvalid();
-        hdr.keys[2].setInvalid();
+        ig_md.count_invalid = drop_key.execute(0);    
+        hdr.keys[ig_md.count_invalid].setInvalid();
+        hdr.keys[ig_md.count_invalid+1].setInvalid();
+        hdr.keys[ig_md.count_invalid+2].setInvalid();
     }
 
     table drop_key3_table {
@@ -341,12 +372,13 @@ control SwitchIngress(
         size = 1;
         default_action = drop_key3_action;
     }
-
+    
     action drop_key4_action(){
-        hdr.keys[0].setInvalid();
-        hdr.keys[1].setInvalid();
-        hdr.keys[2].setInvalid();
-        hdr.keys[3].setInvalid();
+        ig_md.count_invalid = drop_key.execute(0);    
+        hdr.keys[ig_md.count_invalid].setInvalid();
+        hdr.keys[ig_md.count_invalid+1].setInvalid();
+        hdr.keys[ig_md.count_invalid+2].setInvalid();
+        hdr.keys[ig_md.count_invalid+3].setInvalid();
     }
 
     table drop_key4_table {
@@ -494,9 +526,17 @@ control SwitchIngress(
         size = 1;
         default_action = set_last_bit_action;
     }
+    
+    RegisterAction<bit<32>, _, bit<32>>(initial_key_num) get_initial_key_num = {//
+        void apply(inout bit<32> reg_value, out bit<32> return_value){
+            return_value = reg_value;
+        }
+    };
 
     RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value_to_pkt = {//
         void apply(inout bit<16> reg_value, out bit<16> return_value){
+            //ig_md.initial_key_num = get_initial_key_num.execute(0);
+            //hdr.values[0:]
             //hdr.values = reg_value;
         }
     };
@@ -543,8 +583,6 @@ control SwitchIngress(
         hdr.netmc.keyNum = hdr.netmc.keyNum - 4;
     }
 
-    
-
     action set_shiftNum_action(){
         // if(hdr.netmc.keyNum > 4)
             hdr.netmc.shiftNum = 0;
@@ -582,6 +620,7 @@ control SwitchIngress(
         if(hdr.netmc.isValid()){
             if(hdr.netmc.op == OP_MULTIGET || hdr.netmc.op == OP_GET){
                 if(hdr.netmc.op == OP_MULTIGET){
+                    //set_initial_key_num_table.apply();
                     set_shiftNum_table.apply();
                     check_keyNum_table.apply();
                     if(hdr.netmc.shiftNum != 0){
@@ -592,6 +631,7 @@ control SwitchIngress(
                         get_keyNum_table.apply(); //replicated
                         drop_clone_key_table.apply();
                         //do_clone_table.apply();
+
                         drop_cutIndex_table.apply(); //original
                         if((hdr.netmc.cutIndex & 1) == 1)
                             set_last_bit_table.apply();
@@ -606,7 +646,7 @@ control SwitchIngress(
                                 drop_key2_table.apply();
                             else if((hdr.netmc.cutIndex & 2) == 1)
                                 drop_key3_table.apply();
-                            else if((hdr.netmc.cutIndex & 2) == 1)
+                            else if((hdr.netmc.cutIndex & 2) == 1)// & 1로 바꾸면 error
                                 drop_key4_table.apply();
                             /*
                             if(hdr.netmc.cutIndex != 0)
@@ -716,6 +756,6 @@ Switch(pipe) main;
 //1. mirror 구현
 //2. put_req_value_to_pkt -> 로직 재구현
 //------
-//drop key할 때 레지스터 이용해서 몇개 key가 invalid했는지 정보...
+//DROP KEY => mutually exclusive
 //left_shift_action -> 상수대신 *으로 바꿨는데 그러면 overflow 문제 해결해야함...
 //Masked comparison is always false
