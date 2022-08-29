@@ -13,9 +13,9 @@
 #define MAX_KEY 16
 #define NUM_SRV 4
 
-#define OPTION1 8
-#define OPTION2 4
-#define OPTION3 2
+#define OPTION1 32768
+#define OPTION2 16384
+#define OPTION3 8192
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -48,7 +48,6 @@ header netmc_h { // Total 25 bytes actually
     bit<8> id; //request id = packet id
     bit<16> keyNum; //key 개수, 송유진 학점
     bit<16> cutNum; //잘리는 패킷의 개수
-    bit<16> shiftNum; //얼마나 shift할지 알려줌(계속 변동)
     bit<16> cutIndex; //01001 어디서 잘리는지 알려주는 인덱스
 }
 
@@ -327,25 +326,8 @@ control SwitchIngress(
         size = 1;
         default_action = left_shift_cutIndex4_action;
     }
-    
-    RegisterAction<bit<16>, _, bit<16>>(initial_key_num) set_initial_key_num = {
-        void apply(inout bit<16> reg_value, out bit<16> return_value){
-            reg_value = hdr.netmc.keyNum;
-        }
-    };
 
-    action set_initial_key_num_action(){   
-        set_initial_key_num.execute(0);    
-    }
-
-    table set_initial_key_num_table {
-        actions = {
-            set_initial_key_num_action;
-        }
-        size = 1;
-        default_action = set_initial_key_num_action;
-    }
-/*
+    /*
     action mirror_fwd_action(PortId_t dest_port, bit<1> ing_mir, MirrorId_t ing_ses, bit<1> egr_mir, MirrorId_t egr_ses) {
         ig_tm_md.ucast_egress_port = dest_port;
         ig_md.do_ing_mirroring = ing_mir;
@@ -365,15 +347,87 @@ control SwitchIngress(
         default_action = mirror_fwd_action;
     }*/
     
-    RegisterAction<bit<16>, _, bit<16>>(count_key_num) drop_key = {
+    RegisterAction<bit<16>, _, bit<16>>(count_invalid) get_drop_key = {
         void apply(inout bit<16> reg_value, out bit<16> return_value){
             return_value = reg_value;
         }
     };
 
+    RegisterAction<bit<16>, _, bit<16>>(count_invalid) set_drop_key1 = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            reg_value = 1;
+        }
+    };
+
+    RegisterAction<bit<16>, _, bit<16>>(count_invalid) set_drop_key2 = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            reg_value = 2;
+        }
+    };
+
+    RegisterAction<bit<16>, _, bit<16>>(count_invalid) set_drop_key3 = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            reg_value = 3;
+        }
+    };
+
+    RegisterAction<bit<16>, _, bit<16>>(count_invalid) set_drop_key4 = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            reg_value = 4;
+        }
+    };
+
+    action drop_clone_key1_action(){   
+        //set_drop_key1.execute(0); //hdr.netmc.keyNum;
+        ig_md.count_invalid = get_drop_key.execute(0);   
+        hdr.keys[ig_md.count_invalid-1].setInvalid();
+    }
+
+    table drop_clone_key1_table {
+        actions = {
+            drop_clone_key1_action;
+        }
+        size = 1;
+        default_action = drop_clone_key1_action;
+    }
+
+    action drop_clone_key2_action(){
+        //set_drop_key2.execute(0); 
+        ig_md.count_invalid = get_drop_key.execute(0);    
+        hdr.keys[ig_md.count_invalid-2].setInvalid();
+        hdr.keys[ig_md.count_invalid-1].setInvalid();
+    }
+
+    table drop_clone_key2_table {
+        actions = {
+            drop_clone_key2_action;
+        }
+        size = 1;
+        default_action = drop_clone_key2_action;
+    }
+
+    action drop_clone_key3_action(){
+        //set_drop_key3.execute(0); 
+        ig_md.count_invalid = get_drop_key.execute(0);    
+        hdr.keys[ig_md.count_invalid-3].setInvalid();
+        hdr.keys[ig_md.count_invalid-2].setInvalid();
+        hdr.keys[ig_md.count_invalid-1].setInvalid();
+    }
+
+    table drop_clone_key3_table {
+        actions = {
+            drop_clone_key3_action;
+        }
+        size = 1;
+        default_action = drop_clone_key3_action;
+    }
+
     action drop_key1_action(){   
-        ig_md.count_invalid = drop_key.execute(0);    
+        ig_md.count_invalid = get_drop_key.execute(0);   
+        hdr.keys[ig_md.count_invalid-1].setValid();
         hdr.keys[ig_md.count_invalid].setInvalid();
+        hdr.keys[ig_md.count_invalid+1].setInvalid();
+        hdr.keys[ig_md.count_invalid+2].setInvalid();
     }
 
     table drop_key1_table {
@@ -384,8 +438,10 @@ control SwitchIngress(
         default_action = drop_key1_action;
     }
 
-    action drop_key2_action(){
-        ig_md.count_invalid = drop_key.execute(0);    
+    action drop_key2_action(){   
+        ig_md.count_invalid = get_drop_key.execute(0);   
+        hdr.keys[ig_md.count_invalid-2].setValid();
+        hdr.keys[ig_md.count_invalid-1].setValid();
         hdr.keys[ig_md.count_invalid].setInvalid();
         hdr.keys[ig_md.count_invalid+1].setInvalid();
     }
@@ -398,11 +454,12 @@ control SwitchIngress(
         default_action = drop_key2_action;
     }
 
-    action drop_key3_action(){
-        ig_md.count_invalid = drop_key.execute(0);    
+    action drop_key3_action(){   
+        ig_md.count_invalid = get_drop_key.execute(0);   
+        hdr.keys[ig_md.count_invalid-3].setValid();
+        hdr.keys[ig_md.count_invalid-2].setValid();
+        hdr.keys[ig_md.count_invalid-1].setValid();
         hdr.keys[ig_md.count_invalid].setInvalid();
-        hdr.keys[ig_md.count_invalid+1].setInvalid();
-        hdr.keys[ig_md.count_invalid+2].setInvalid();
     }
 
     table drop_key3_table {
@@ -414,10 +471,11 @@ control SwitchIngress(
     }
 
     action drop_clone_key_action(){
-        hdr.keys[0].setInvalid();
-        hdr.keys[1].setInvalid();
-        hdr.keys[2].setInvalid();
-        hdr.keys[3].setInvalid();
+        ig_md.count_invalid = get_drop_key.execute(0);    
+        hdr.keys[ig_md.count_invalid].setInvalid();
+        hdr.keys[ig_md.count_invalid+1].setInvalid();
+        hdr.keys[ig_md.count_invalid+2].setInvalid();
+        hdr.keys[ig_md.count_invalid+3].setInvalid();
     }
 
     table drop_clone_key_table {
@@ -455,7 +513,7 @@ control SwitchIngress(
     }
 
     action update_clone_keyNum_action(){
-        hdr.netmc.keyNum = hdr.netmc.keyNum - hdr.netmc.shiftNum;
+        hdr.netmc.keyNum = 4;
     }
 
     table update_clone_keyNum_table {
@@ -466,34 +524,10 @@ control SwitchIngress(
         default_action = update_clone_keyNum_action;
     }
 
-    action update_keyNum1_action(){
-        hdr.netmc.keyNum = hdr.netmc.shiftNum;
-    }
-
-    table update_keyNum1_table {
-        actions = {
-            update_keyNum1_action;
-        }
-        size = 1;
-        default_action = update_keyNum1_action;
-    }
-
-    action update_keyNum2_action(){
-        hdr.netmc.keyNum = hdr.netmc.shiftNum;
-    }
-
-    table update_keyNum2_table {
-        actions = {
-            update_keyNum2_action;
-        }
-        size = 1;
-        default_action = update_keyNum2_action;
-    }
-
     action drop_cutIndex_action(){
-        hdr.netmc.cutIndex = hdr.netmc.cutIndex & hdr.netmc.cutIndex;
+        hdr.netmc.cutIndex = hdr.netmc.cutIndex & 61440;
     }
-
+    
     table drop_cutIndex_table{
         actions = {
             drop_cutIndex_action;
@@ -589,20 +623,6 @@ control SwitchIngress(
         default_action = check_last_pkt_action;
     }
 
-    action check_keyNum_action(){
-        if(hdr.netmc.keyNum > 4)
-            ig_md.chk_keyNum = 1;
-        ig_md.chk_keyNum = 0;
-    }
-
-    table check_keyNum_table {
-        actions = {
-            check_keyNum_action;
-        }
-        size = 1;
-        default_action = check_keyNum_action;
-    }
-
     action is_keyNum4_action(){
         ig_md.chk_keyNum = hdr.netmc.keyNum;
         ig_md.chk_keyNum = ig_md.chk_keyNum - 4;
@@ -615,6 +635,44 @@ control SwitchIngress(
         size = 1;
         default_action = is_keyNum4_action;
     }
+
+    action update_keyNum1_action(){
+        hdr.netmc.keyNum = 1;
+    }
+
+    table update_keyNum1_table {
+        actions = {
+            update_keyNum1_action;
+        }
+        size = 1;
+        default_action = update_keyNum1_action;
+    }
+
+    action update_keyNum2_action(){
+        hdr.netmc.keyNum = 2;
+    }
+
+    table update_keyNum2_table {
+        actions = {
+            update_keyNum2_action;
+        }
+        size = 1;
+        default_action = update_keyNum2_action;
+    }
+
+    action update_keyNum3_action(){
+        hdr.netmc.keyNum = 3;
+    }
+
+    table update_keyNum3_table {
+        actions = {
+            update_keyNum3_action;
+        }
+        size = 1;
+        default_action = update_keyNum3_action;
+    }
+
+
 
 /*
     // 복제 과정 !!
@@ -636,42 +694,42 @@ control SwitchIngress(
         if(hdr.netmc.isValid()){
             if(hdr.netmc.op == OP_MULTIGET || hdr.netmc.op == OP_GET){
                 if(hdr.netmc.op == OP_MULTIGET){
-                    //set_initial_key_num_table.apply();
                     is_keyNum4_table.apply();
                     if(ig_md.chk_keyNum > 0){ 
                         get_keyNum_table.apply(); //replicated
                         left_shift_cutIndex4_table.apply();
-                        drop_clone_key_table.apply();
+                            //#drop_clone_key_table.apply();
                         //do_clone_table.apply();
 
-                        //drop_cutIndex_table.apply(); //original
+                        drop_cutIndex_table.apply(); //original
                         if((hdr.netmc.cutIndex & 1) == 1)
                             set_last_bit_table.apply();
 
-                        //drop_key1_table.apply();
-                        update_keyNum1_table.apply();
+                            //#drop_key_table.apply();
+                        update_clone_keyNum_table.apply();
                     }
                     if(ig_md.chk_keyNum <= 0){
-                        if((hdr.netmc.cutIndex & 8) == 1){
+                        if((hdr.netmc.cutIndex & OPTION1) == 1){
                             left_shift_cutIndex1_table.apply();
-                            //key invalid
+                                //#drop_key1_table.apply(); //그 번째부터?? 꼭 drop??
                             if(hdr.netmc.cutIndex != 0)
                                 //do_clone_table.apply(); 
-
-                            //key valid & invalid
-                            //keyNum update
-                            
+                            update_keyNum1_table.apply();
                         }
-                        else if((hdr.netmc.cutIndex & 4) == 1){
+                        else if((hdr.netmc.cutIndex & OPTION2) == 1){
                             left_shift_cutIndex2_table.apply();
+                                //#drop_key2_table.apply();
                             if(hdr.netmc.cutIndex != 0)
                                 //do_clone_table.apply(); 
+                            update_keyNum2_table.apply();
 
                         }
-                        else if((hdr.netmc.cutIndex & 2) == 1){
+                        else if((hdr.netmc.cutIndex & OPTION3) == 1){
                             left_shift_cutIndex3_table.apply();
+                                //drop_key3_table.apply();
                             if(hdr.netmc.cutIndex != 0)
                                 //do_clone_table.apply(); 
+                            update_keyNum3_table.apply();
 
                         }
                     }
@@ -683,7 +741,7 @@ control SwitchIngress(
                 if(hdr.netmc.op == OP_MG_REPLY){
                     check_last_pkt_table.apply();
                     if(ig_md.last_pkt == 1)
-                        put_req_value_to_pkt_table.apply(); 
+                        put_req_value_to_pkt_table.apply(); //
                     else{
                         put_req_value_table.apply(); 
                         update_arrived_key_num_table.apply();
@@ -776,6 +834,4 @@ Switch(pipe) main;
 //1. mirror 구현
 //2. put_req_value_to_pkt -> 로직 재구현
 //------
-//DROP KEY => mutually exclusive
-//left_shift_action -> 상수대신 *으로 바꿨는데 그러면 overflow 문제 해결해야함...
 //Masked comparison is always false
