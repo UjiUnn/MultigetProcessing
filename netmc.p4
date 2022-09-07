@@ -10,7 +10,7 @@
 #define OP_MG_REPLY 3
 
 #define NUM_OBJ 131072
-#define MAX_KEY 16
+#define MAX_KEY 8
 #define NUM_SRV 4
 
 #define OPTION1 32768
@@ -27,6 +27,8 @@ typedef bit<8> trans_protocol_t;
 const trans_protocol_t TYPE_TCP = 6;
 const trans_protocol_t TYPE_UDP = 17;
 const bit<16> TYPE_NETMC = 4321; // NOT 0x1234
+typedef bit<3> mirror_type_t;
+const mirror_type_t MIRROR_TYPE_I2E = 1;
 
 header ethernet_h {
     bit<48>   dstAddr;
@@ -45,7 +47,9 @@ header value_h {
 
 header netmc_h { // Total 25 bytes actually
     bit<8> op; //operator
-    bit<8> id; //request id = packet id
+    bit<16> id; //request id = packet id
+    bit<16> firstCut;
+    bit<16> lastCut;
     bit<16> keyNum; //key 개수, 송유진 학점
     bit<16> cutNum; //잘리는 패킷의 개수
     bit<16> cutIndex; //01001 어디서 잘리는지 알려주는 인덱스
@@ -106,17 +110,19 @@ header clone_i2e_metadata_t { // clone ingress to egress !!
 */
 
 struct metadata_t {
-    bit<2> do_ing_mirroring;  // Enable ingress mirroring
-    bit<32> dst_srv_idx; //요청이 어떤 서버로 갈지
+    bit<1> do_ing_mirroring;  // Enable ingress mirroring
+    bit<1> do_egr_mirroring;  // Enable egress mirroring
+    MirrorId_t ing_mir_ses;   // Ingress mirror session ID
+    MirrorId_t egr_mir_ses;   // Egress mirror session ID
+    bit<16> count_invalid; 
+    bit<16> chk_keyNum; 
     bit<16> cut_idx; //cutidx 저장하는 temp
     bit<16> key_num; //keynum 저장하는 temp
-    bit<16> num_temp; //pkt에 keynum을 할당해줄 때 사용하는 temp
     bit<16> count_key_num; //value arr에서 사용하는 counter (패킷이 몇개 왔는지)
     bit<16> req_value; //요청(서버)에서 오는 value를 저장함, A+
     bit<16> last_pkt; // last packet
-    bit<32> initial_key_num; 
-    bit<16> count_invalid; 
-    bit<16> chk_keyNum; 
+    bit<16> req_id; 
+    bit<32> dst_srv_idx; //요청이 어떤 서버로 갈지
 }
 
 struct custom_metadata_t {
@@ -138,8 +144,7 @@ struct empty_metadata_t {
 Register<bit<8>,_>(NUM_OBJ,0) count_key_num; //countArr 레지스터 최소 8, 최대 32비트
 Register<bit<16>,_>(NUM_OBJ,0) req_value; //valueArr 
 Register<bit<16>,_>(1,0) dst_srv_idx; // result of hash server
-Register<bit<16>,_>(1,0) count_invalid;
-Register<bit<16>,_>(1,0) initial_key_num;
+Register<bit<16>,_>(1,0) pkt_idx;
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -327,13 +332,14 @@ control SwitchIngress(
         default_action = left_shift_cutIndex4_action;
     }
 
-    /*
+    action set_mirror_type() {
+        ig_intr_dprsr_md.mirror_type = MIRROR_TYPE_I2E;
+    }
+    
     action mirror_fwd_action(PortId_t dest_port, bit<1> ing_mir, MirrorId_t ing_ses, bit<1> egr_mir, MirrorId_t egr_ses) {
         ig_tm_md.ucast_egress_port = dest_port;
         ig_md.do_ing_mirroring = ing_mir;
-        //ig_md.ing_mir_ses = ing_ses;
-        hdr.bridged_md.do_egr_mirroring = egr_mir;
-        hdr.bridged_md.egr_mir_ses = egr_ses;
+        ig_md.ing_mir_ses = ing_ses;
     }
 
     table mirror_fwd_table {
@@ -343,160 +349,61 @@ control SwitchIngress(
         actions = {
             mirror_fwd_action;
         }
-        size = 512;
-        default_action = mirror_fwd_action;
-    }*/
-    
-    RegisterAction<bit<16>, _, bit<16>>(count_invalid) get_drop_key = {
-        void apply(inout bit<16> reg_value, out bit<16> return_value){
-            return_value = reg_value;
-        }
-    };
-
-    RegisterAction<bit<16>, _, bit<16>>(count_invalid) set_drop_key1 = {
-        void apply(inout bit<16> reg_value, out bit<16> return_value){
-            reg_value = 1;
-        }
-    };
-
-    RegisterAction<bit<16>, _, bit<16>>(count_invalid) set_drop_key2 = {
-        void apply(inout bit<16> reg_value, out bit<16> return_value){
-            reg_value = 2;
-        }
-    };
-
-    RegisterAction<bit<16>, _, bit<16>>(count_invalid) set_drop_key3 = {
-        void apply(inout bit<16> reg_value, out bit<16> return_value){
-            reg_value = 3;
-        }
-    };
-
-    RegisterAction<bit<16>, _, bit<16>>(count_invalid) set_drop_key4 = {
-        void apply(inout bit<16> reg_value, out bit<16> return_value){
-            reg_value = 4;
-        }
-    };
-
-    action drop_clone_key1_action(){   
-        //set_drop_key1.execute(0); //hdr.netmc.keyNum;
-        ig_md.count_invalid = get_drop_key.execute(0);   
-        hdr.keys[ig_md.count_invalid-1].setInvalid();
+        size = 1;
     }
 
-    table drop_clone_key1_table {
+    action mirror_clone_fwd_action(PortId_t dest_port, bit<1> ing_mir, MirrorId_t ing_ses, bit<1> egr_mir, MirrorId_t egr_ses) {
+        ig_tm_md.ucast_egress_port = dest_port;
+        ig_md.do_ing_mirroring = ing_mir;
+        ig_md.ing_mir_ses = ing_ses;
+    }
+
+    table mirror_clone_fwd_table {
+        key = {
+            ig_intr_md.ingress_port : exact;
+        }
         actions = {
-            drop_clone_key1_action;
+            mirror_clone_fwd_action;
         }
         size = 1;
-        default_action = drop_clone_key1_action;
     }
 
-    action drop_clone_key2_action(){
-        //set_drop_key2.execute(0); 
-        ig_md.count_invalid = get_drop_key.execute(0);    
-        hdr.keys[ig_md.count_invalid-2].setInvalid();
-        hdr.keys[ig_md.count_invalid-1].setInvalid();
+    action set_drop_first_index_action(){   
+        hdr.netmc.firstCut = 4 - hdr.netmc.keyNum;
     }
 
-    table drop_clone_key2_table {
+    table set_drop_first_index_table {
         actions = {
-            drop_clone_key2_action;
+            set_drop_first_index_action;
         }
         size = 1;
-        default_action = drop_clone_key2_action;
+        default_action = set_drop_first_index_action;
     }
 
-    action drop_clone_key3_action(){
-        //set_drop_key3.execute(0); 
-        ig_md.count_invalid = get_drop_key.execute(0);    
-        hdr.keys[ig_md.count_invalid-3].setInvalid();
-        hdr.keys[ig_md.count_invalid-2].setInvalid();
-        hdr.keys[ig_md.count_invalid-1].setInvalid();
+    action set_drop_last_index_action(){   
+        hdr.netmc.lastCut = hdr.netmc.firstCut + hdr.netmc.keyNum;
+        //hdr.netmc.lastCut = hdr.netmc.lastCut - 1;
     }
 
-    table drop_clone_key3_table {
+    table set_drop_last_index_table {
         actions = {
-            drop_clone_key3_action;
+            set_drop_last_index_action;
         }
         size = 1;
-        default_action = drop_clone_key3_action;
+        default_action = set_drop_last_index_action;
     }
 
-    action drop_key1_action(){   
-        ig_md.count_invalid = get_drop_key.execute(0);   
-        hdr.keys[ig_md.count_invalid-1].setValid();
-        hdr.keys[ig_md.count_invalid].setInvalid();
-        hdr.keys[ig_md.count_invalid+1].setInvalid();
-        hdr.keys[ig_md.count_invalid+2].setInvalid();
+    action set_drop_clone_index_action(){
+        hdr.netmc.firstCut = 4 - hdr.netmc.keyNum;
+        hdr.netmc.lastCut = hdr.netmc.firstCut + hdr.netmc.keyNum - 1;
     }
 
-    table drop_key1_table {
+    table set_drop_clone_index_table {
         actions = {
-            drop_key1_action;
+            set_drop_clone_index_action;
         }
         size = 1;
-        default_action = drop_key1_action;
-    }
-
-    action drop_key2_action(){   
-        ig_md.count_invalid = get_drop_key.execute(0);   
-        hdr.keys[ig_md.count_invalid-2].setValid();
-        hdr.keys[ig_md.count_invalid-1].setValid();
-        hdr.keys[ig_md.count_invalid].setInvalid();
-        hdr.keys[ig_md.count_invalid+1].setInvalid();
-    }
-
-    table drop_key2_table {
-        actions = {
-            drop_key2_action;
-        }
-        size = 1;
-        default_action = drop_key2_action;
-    }
-
-    action drop_key3_action(){   
-        ig_md.count_invalid = get_drop_key.execute(0);   
-        hdr.keys[ig_md.count_invalid-3].setValid();
-        hdr.keys[ig_md.count_invalid-2].setValid();
-        hdr.keys[ig_md.count_invalid-1].setValid();
-        hdr.keys[ig_md.count_invalid].setInvalid();
-    }
-
-    table drop_key3_table {
-        actions = {
-            drop_key3_action;
-        }
-        size = 1;
-        default_action = drop_key3_action;
-    }
-
-    action drop_clone_key_action(){
-        ig_md.count_invalid = get_drop_key.execute(0);    
-        hdr.keys[ig_md.count_invalid].setInvalid();
-        hdr.keys[ig_md.count_invalid+1].setInvalid();
-        hdr.keys[ig_md.count_invalid+2].setInvalid();
-        hdr.keys[ig_md.count_invalid+3].setInvalid();
-    }
-
-    table drop_clone_key_table {
-        actions = {
-            drop_clone_key_action;
-        }
-        size = 1;
-        default_action = drop_clone_key_action;
-    }
-
-
-    action get_cut_idx_action(){
-        ig_md.cut_idx = hdr.netmc.cutIndex;
-    }
-
-    table get_cut_idx_table {
-        actions = {
-            get_cut_idx_action;
-        }
-        size = 1;
-        default_action = get_cut_idx_action;
+        default_action = set_drop_clone_index_action;
     }
 
     action get_keyNum_action(){
@@ -543,6 +450,12 @@ control SwitchIngress(
         }
     };
 
+    RegisterAction<bit<16>, _, bit<16>>(count_key_num) get_count_key_num = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            return_value = reg_value;
+        }
+    };
+
     action update_arrived_key_num_action(){
         ig_md.count_key_num = update_arrived_key_num.execute(hdr.netmc.id);
     }
@@ -561,8 +474,14 @@ control SwitchIngress(
         }
     };
 
+    action get_req_id(){
+        ig_md.req_id = hdr.netmc.id*8;
+        ig_md.count_key_num = get_count_key_num.execute(hdr.netmc.id);
+    }
+
     action put_req_value_action(){
-        put_req_value.execute(hdr.netmc.id);
+        ig_md.req_id = ig_md.count_key_num+ig_md.req_id;
+        put_req_value.execute(ig_md.req_id);
     }
 
     table put_req_value_table {
@@ -584,31 +503,114 @@ control SwitchIngress(
         size = 1;
         default_action = set_last_bit_action;
     }
-    
-    RegisterAction<bit<16>, _, bit<16>>(initial_key_num) get_initial_key_num = {//
+
+    RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value_to_pkt = {
         void apply(inout bit<16> reg_value, out bit<16> return_value){
             return_value = reg_value;
         }
     };
 
-    RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value_to_pkt = {//
-        void apply(inout bit<16> reg_value, out bit<16> return_value){
-            //ig_md.initial_key_num = get_initial_key_num.execute(0);
-            //hdr.values[0:]
-            //hdr.values = reg_value;
-        }
-    };
-
-    action put_req_value_to_pkt_action(){
-        put_req_value_to_pkt.execute(hdr.netmc.id);
+    action put_req_value_to_pkt1_action(){
+        hdr.values[0].value = put_req_value_to_pkt.execute(ig_md.req_id);
     }
 
-    table put_req_value_to_pkt_table {
+    action put_req_value_to_pkt2_action(){
+        ig_md.req_id = ig_md.req_id+1;
+        hdr.values[1].value = put_req_value_to_pkt.execute(ig_md.req_id);
+    }
+
+    action put_req_value_to_pkt3_action(){
+        ig_md.req_id = ig_md.req_id+1;
+        hdr.values[2].value = put_req_value_to_pkt.execute(ig_md.req_id);
+    }
+
+    action put_req_value_to_pkt4_action(){
+        ig_md.req_id = ig_md.req_id+1;
+        hdr.values[3].value = put_req_value_to_pkt.execute(ig_md.req_id);
+    }
+
+    action put_req_value_to_pkt5_action(){
+        ig_md.req_id = ig_md.req_id+1;
+        hdr.values[4].value = put_req_value_to_pkt.execute(ig_md.req_id);
+    }
+
+    action put_req_value_to_pkt6_action(){
+        ig_md.req_id = ig_md.req_id+1;
+        hdr.values[5].value = put_req_value_to_pkt.execute(ig_md.req_id);
+    }
+
+    action put_req_value_to_pkt7_action(){
+        ig_md.req_id = ig_md.req_id+1;
+        hdr.values[6].value = put_req_value_to_pkt.execute(ig_md.req_id);
+    }
+
+    action put_req_value_to_pkt8_action(){
+        ig_md.req_id = ig_md.req_id+1;
+        hdr.values[7].value = put_req_value_to_pkt.execute(ig_md.req_id);
+    }
+
+    table put_req_value_to_pkt1_table {
         actions = {
-            put_req_value_to_pkt_action;
+            put_req_value_to_pkt1_action;
         }
         size = 1;
-        default_action = put_req_value_to_pkt_action;
+        default_action = put_req_value_to_pkt1_action;
+    }
+
+    table put_req_value_to_pkt2_table {
+        actions = {
+            put_req_value_to_pkt2_action;
+        }
+        size = 1;
+        default_action = put_req_value_to_pkt2_action;
+    }
+
+    table put_req_value_to_pkt3_table {
+        actions = {
+            put_req_value_to_pkt3_action;
+        }
+        size = 1;
+        default_action = put_req_value_to_pkt3_action;
+    }
+
+    table put_req_value_to_pkt4_table {
+        actions = {
+            put_req_value_to_pkt4_action;
+        }
+        size = 1;
+        default_action = put_req_value_to_pkt4_action;
+    }
+
+    table put_req_value_to_pkt5_table {
+        actions = {
+            put_req_value_to_pkt5_action;
+        }
+        size = 1;
+        default_action = put_req_value_to_pkt5_action;
+    }
+
+    table put_req_value_to_pkt6_table {
+        actions = {
+            put_req_value_to_pkt6_action;
+        }
+        size = 1;
+        default_action = put_req_value_to_pkt6_action;
+    }
+
+    table put_req_value_to_pkt7_table {
+        actions = {
+            put_req_value_to_pkt7_action;
+        }
+        size = 1;
+        default_action = put_req_value_to_pkt7_action;
+    }
+
+    table put_req_value_to_pkt8_table {
+        actions = {
+            put_req_value_to_pkt8_action;
+        }
+        size = 1;
+        default_action = put_req_value_to_pkt8_action;
     }
 
     action check_last_pkt_action(){
@@ -672,8 +674,6 @@ control SwitchIngress(
         default_action = update_keyNum3_action;
     }
 
-
-
 /*
     // 복제 과정 !!
     action do_clone_action (CloneSessionId_t session_id) { // 
@@ -698,40 +698,36 @@ control SwitchIngress(
                     if(ig_md.chk_keyNum > 0){ 
                         get_keyNum_table.apply(); //replicated
                         left_shift_cutIndex4_table.apply();
-                            //#drop_clone_key_table.apply();
-                        //do_clone_table.apply();
+
+                        mirror_clone_fwd_table.apply();
+                        set_mirror_type();
 
                         drop_cutIndex_table.apply(); //original
                         if((hdr.netmc.cutIndex & 1) == 1)
                             set_last_bit_table.apply();
-
-                            //#drop_key_table.apply();
                         update_clone_keyNum_table.apply();
                     }
                     if(ig_md.chk_keyNum <= 0){
-                        if((hdr.netmc.cutIndex & OPTION1) == 1){
+                        if((hdr.netmc.cutIndex & OPTION1) == 1)
                             left_shift_cutIndex1_table.apply();
-                                //#drop_key1_table.apply(); //그 번째부터?? 꼭 drop??
-                            if(hdr.netmc.cutIndex != 0)
-                                //do_clone_table.apply(); 
-                            update_keyNum1_table.apply();
-                        }
-                        else if((hdr.netmc.cutIndex & OPTION2) == 1){
+                        else if((hdr.netmc.cutIndex & OPTION2) == 1)
                             left_shift_cutIndex2_table.apply();
-                                //#drop_key2_table.apply();
-                            if(hdr.netmc.cutIndex != 0)
-                                //do_clone_table.apply(); 
-                            update_keyNum2_table.apply();
-
-                        }
-                        else if((hdr.netmc.cutIndex & OPTION3) == 1){
+                        else if((hdr.netmc.cutIndex & OPTION3) == 1)
                             left_shift_cutIndex3_table.apply();
-                                //drop_key3_table.apply();
-                            if(hdr.netmc.cutIndex != 0)
-                                //do_clone_table.apply(); 
+                            
+                        if(hdr.netmc.cutIndex != 0){
+                            mirror_fwd_table.apply();
+                            set_mirror_type();
+                        }
+                        if((hdr.netmc.cutIndex & OPTION1) == 1)
+                            update_keyNum1_table.apply();
+                        else if((hdr.netmc.cutIndex & OPTION2) == 1)
+                            update_keyNum2_table.apply();
+                        else if((hdr.netmc.cutIndex & OPTION3) == 1)
                             update_keyNum3_table.apply();
 
-                        }
+                        set_drop_first_index_table.apply();
+                        set_drop_last_index_table.apply();
                     }
                 }
                 get_dst_srv_table.apply();
@@ -740,9 +736,19 @@ control SwitchIngress(
             else if(hdr.netmc.op == OP_G_REPLY || hdr.netmc.op == OP_MG_REPLY){
                 if(hdr.netmc.op == OP_MG_REPLY){
                     check_last_pkt_table.apply();
-                    if(ig_md.last_pkt == 1)
-                        put_req_value_to_pkt_table.apply(); //
+                    if(ig_md.last_pkt == 1){
+                        get_req_id();
+                        put_req_value_to_pkt1_table.apply(); 
+                        put_req_value_to_pkt2_table.apply(); 
+                        put_req_value_to_pkt3_table.apply(); 
+                        put_req_value_to_pkt4_table.apply(); 
+                        put_req_value_to_pkt5_table.apply(); 
+                        put_req_value_to_pkt6_table.apply(); 
+                        put_req_value_to_pkt7_table.apply(); 
+                        put_req_value_to_pkt8_table.apply(); 
+                    }
                     else{
+                        get_req_id();
                         put_req_value_table.apply(); 
                         update_arrived_key_num_table.apply();
                     }
@@ -763,6 +769,7 @@ control SwitchIngressDeparser(
         inout header_t hdr,
         in metadata_t ig_md,
         in ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md) {
+
         //out clone_i2e_metadata_t clone_i2e_meta, // 수정 !!
         //out empty_metadata_t resubmit_meta, // 수정 !!
         //out metadata normal_meta, // 수정 !!
@@ -778,6 +785,7 @@ control SwitchIngressDeparser(
             }
         }
         common_deparser.apply(packet, hdr);*/
+
         pkt.emit(hdr); // 원래는 이 코드 하나만 apply 안에 있었음
     }
 }
@@ -790,6 +798,7 @@ parser SwitchEgressParser(
         out empty_header_t hdr,
         out empty_metadata_t eg_md,
         out egress_intrinsic_metadata_t eg_intr_md) {
+            
     state start {
         pkt.extract(eg_intr_md);
         transition accept;
@@ -829,9 +838,3 @@ Pipeline(SwitchIngressParser(),
          SwitchEgressDeparser()) pipe;
 
 Switch(pipe) main;
-
-//해야할 것
-//1. mirror 구현
-//2. put_req_value_to_pkt -> 로직 재구현
-//------
-//Masked comparison is always false
