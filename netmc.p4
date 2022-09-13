@@ -141,10 +141,17 @@ struct empty_metadata_t {
     custom_metadata_t custom_metadata;
 }
 
-Register<bit<8>,_>(NUM_OBJ,0) count_key_num; //countArr 레지스터 최소 8, 최대 32비트
-Register<bit<16>,_>(NUM_OBJ,0) req_value; //valueArr 
 Register<bit<16>,_>(1,0) dst_srv_idx; // result of hash server
 Register<bit<16>,_>(1,0) pkt_idx;
+Register<bit<8>,_>(NUM_OBJ,0) count_key_num; //countArr 레지스터 최소 8, 최대 32비트
+Register<bit<16>,_>(NUM_OBJ,0) req_value1; //valueArr 
+Register<bit<16>,_>(NUM_OBJ,0) req_value2; //valueArr 
+Register<bit<16>,_>(NUM_OBJ,0) req_value3; //valueArr 
+Register<bit<16>,_>(NUM_OBJ,0) req_value4; //valueArr 
+Register<bit<16>,_>(NUM_OBJ,0) req_value5; //valueArr 
+Register<bit<16>,_>(NUM_OBJ,0) req_value6; //valueArr 
+Register<bit<16>,_>(NUM_OBJ,0) req_value7; //valueArr 
+Register<bit<16>,_>(NUM_OBJ,0) req_value8; //valueArr 
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -393,19 +400,6 @@ control SwitchIngress(
         default_action = set_drop_last_index_action;
     }
 
-    action set_drop_clone_index_action(){
-        hdr.netmc.firstCut = 4 - hdr.netmc.keyNum;
-        hdr.netmc.lastCut = hdr.netmc.firstCut + hdr.netmc.keyNum - 1;
-    }
-
-    table set_drop_clone_index_table {
-        actions = {
-            set_drop_clone_index_action;
-        }
-        size = 1;
-        default_action = set_drop_clone_index_action;
-    }
-
     action get_keyNum_action(){
         ig_md.key_num = hdr.netmc.keyNum;
         ig_md.cut_idx = hdr.netmc.cutIndex;
@@ -456,6 +450,24 @@ control SwitchIngress(
         }
     };
 
+    RegisterAction<bit<16>, _, bit<16>>(count_key_num) set_count_key_num_zero = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            reg_value = 0;
+        }
+    };
+
+    action set_count_key_num_zero_action(){
+        set_count_key_num_zero.execute(hdr.netmc.id);
+    }
+
+    table set_count_key_num_zero_table {
+        actions = {
+            set_count_key_num_zero_action;
+        }
+        size = 1;
+        default_action = set_count_key_num_zero_action;
+    }
+
     action update_arrived_key_num_action(){
         ig_md.count_key_num = update_arrived_key_num.execute(hdr.netmc.id);
     }
@@ -468,7 +480,7 @@ control SwitchIngress(
         default_action = update_arrived_key_num_action;
     }
 
-    RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value = {
+    RegisterAction<bit<16>, _, bit<16>>(req_value1) put_req_value = { //
         void apply(inout bit<16> reg_value, out bit<16> return_value){
             reg_value = ig_md.req_value; 
         }
@@ -483,7 +495,7 @@ control SwitchIngress(
         ig_md.req_id = ig_md.count_key_num+ig_md.req_id;
         put_req_value.execute(ig_md.req_id);
     }
-
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
     table put_req_value_table {
         actions = {
             put_req_value_action;
@@ -504,113 +516,155 @@ control SwitchIngress(
         default_action = set_last_bit_action;
     }
 
-    RegisterAction<bit<16>, _, bit<16>>(req_value) put_req_value_to_pkt = {
+    RegisterAction<bit<16>, _, bit<16>>(req_value1) put_req_value1_to_pkt = {
         void apply(inout bit<16> reg_value, out bit<16> return_value){
             return_value = reg_value;
         }
     };
 
-    action put_req_value_to_pkt1_action(){
-        hdr.values[0].value = put_req_value_to_pkt.execute(ig_md.req_id);
+    RegisterAction<bit<16>, _, bit<16>>(req_value2) put_req_value2_to_pkt = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            return_value = reg_value;
+        }
+    };
+
+    RegisterAction<bit<16>, _, bit<16>>(req_value3) put_req_value3_to_pkt = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            return_value = reg_value;
+        }
+    };
+
+    RegisterAction<bit<16>, _, bit<16>>(req_value4) put_req_value4_to_pkt = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            return_value = reg_value;
+        }
+    };
+
+    RegisterAction<bit<16>, _, bit<16>>(req_value5) put_req_value5_to_pkt = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            return_value = reg_value;
+        }
+    };
+
+    RegisterAction<bit<16>, _, bit<16>>(req_value6) put_req_value6_to_pkt = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            return_value = reg_value;
+        }
+    };
+
+    RegisterAction<bit<16>, _, bit<16>>(req_value7) put_req_value7_to_pkt = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            return_value = reg_value;
+        }
+    };
+
+    RegisterAction<bit<16>, _, bit<16>>(req_value8) put_req_value8_to_pkt = {
+        void apply(inout bit<16> reg_value, out bit<16> return_value){
+            return_value = reg_value;
+        }
+    };
+    
+    action put_req_value1_to_pkt_action(){
+        hdr.values[0].value = put_req_value1_to_pkt.execute(ig_md.req_id);
     }
 
-    action put_req_value_to_pkt2_action(){
+    action put_req_value2_to_pkt_action(){
         ig_md.req_id = ig_md.req_id+1;
-        hdr.values[1].value = put_req_value_to_pkt.execute(ig_md.req_id);
+        hdr.values[1].value = put_req_value2_to_pkt.execute(ig_md.req_id);
     }
 
-    action put_req_value_to_pkt3_action(){
+    action put_req_value3_to_pkt_action(){
         ig_md.req_id = ig_md.req_id+1;
-        hdr.values[2].value = put_req_value_to_pkt.execute(ig_md.req_id);
+        hdr.values[2].value = put_req_value3_to_pkt.execute(ig_md.req_id);
     }
 
-    action put_req_value_to_pkt4_action(){
+    action put_req_value4_to_pkt_action(){
         ig_md.req_id = ig_md.req_id+1;
-        hdr.values[3].value = put_req_value_to_pkt.execute(ig_md.req_id);
+        hdr.values[3].value = put_req_value4_to_pkt.execute(ig_md.req_id);
     }
 
-    action put_req_value_to_pkt5_action(){
+    action put_req_value5_to_pkt_action(){
         ig_md.req_id = ig_md.req_id+1;
-        hdr.values[4].value = put_req_value_to_pkt.execute(ig_md.req_id);
+        hdr.values[4].value = put_req_value5_to_pkt.execute(ig_md.req_id);
     }
 
-    action put_req_value_to_pkt6_action(){
+    action put_req_value6_to_pkt_action(){
         ig_md.req_id = ig_md.req_id+1;
-        hdr.values[5].value = put_req_value_to_pkt.execute(ig_md.req_id);
+        hdr.values[5].value = put_req_value6_to_pkt.execute(ig_md.req_id);
     }
 
-    action put_req_value_to_pkt7_action(){
+    action put_req_value7_to_pkt_action(){
         ig_md.req_id = ig_md.req_id+1;
-        hdr.values[6].value = put_req_value_to_pkt.execute(ig_md.req_id);
+        hdr.values[6].value = put_req_value7_to_pkt.execute(ig_md.req_id);
     }
 
-    action put_req_value_to_pkt8_action(){
+    action put_req_value8_to_pkt_action(){
         ig_md.req_id = ig_md.req_id+1;
-        hdr.values[7].value = put_req_value_to_pkt.execute(ig_md.req_id);
+        hdr.values[7].value = put_req_value8_to_pkt.execute(ig_md.req_id);
     }
 
-    table put_req_value_to_pkt1_table {
+    table put_req_value1_to_pkt_table {
         actions = {
-            put_req_value_to_pkt1_action;
+            put_req_value1_to_pkt_action;
         }
         size = 1;
-        default_action = put_req_value_to_pkt1_action;
+        default_action = put_req_value1_to_pkt_action;
     }
 
-    table put_req_value_to_pkt2_table {
+    table put_req_value2_to_pkt_table {
         actions = {
-            put_req_value_to_pkt2_action;
+            put_req_value2_to_pkt_action;
         }
         size = 1;
-        default_action = put_req_value_to_pkt2_action;
+        default_action = put_req_value2_to_pkt_action;
     }
 
-    table put_req_value_to_pkt3_table {
+    table put_req_value3_to_pkt_table {
         actions = {
-            put_req_value_to_pkt3_action;
+            put_req_value3_to_pkt_action;
         }
         size = 1;
-        default_action = put_req_value_to_pkt3_action;
+        default_action = put_req_value3_to_pkt_action;
     }
 
-    table put_req_value_to_pkt4_table {
+    table put_req_value4_to_pkt_table {
         actions = {
-            put_req_value_to_pkt4_action;
+            put_req_value4_to_pkt_action;
         }
         size = 1;
-        default_action = put_req_value_to_pkt4_action;
+        default_action = put_req_value4_to_pkt_action;
     }
 
-    table put_req_value_to_pkt5_table {
+    table put_req_value5_to_pkt_table {
         actions = {
-            put_req_value_to_pkt5_action;
+            put_req_value5_to_pkt_action;
         }
         size = 1;
-        default_action = put_req_value_to_pkt5_action;
+        default_action = put_req_value5_to_pkt_action;
     }
 
-    table put_req_value_to_pkt6_table {
+    table put_req_value6_to_pkt_table {
         actions = {
-            put_req_value_to_pkt6_action;
+            put_req_value6_to_pkt_action;
         }
         size = 1;
-        default_action = put_req_value_to_pkt6_action;
+        default_action = put_req_value6_to_pkt_action;
     }
 
-    table put_req_value_to_pkt7_table {
+    table put_req_value7_to_pkt_table {
         actions = {
-            put_req_value_to_pkt7_action;
+            put_req_value7_to_pkt_action;
         }
         size = 1;
-        default_action = put_req_value_to_pkt7_action;
+        default_action = put_req_value7_to_pkt_action;
     }
 
-    table put_req_value_to_pkt8_table {
+    table put_req_value8_to_pkt_table {
         actions = {
-            put_req_value_to_pkt8_action;
+            put_req_value8_to_pkt_action;
         }
         size = 1;
-        default_action = put_req_value_to_pkt8_action;
+        default_action = put_req_value8_to_pkt_action;
     }
 
     action check_last_pkt_action(){
@@ -738,14 +792,15 @@ control SwitchIngress(
                     check_last_pkt_table.apply();
                     if(ig_md.last_pkt == 1){
                         get_req_id();
-                        put_req_value_to_pkt1_table.apply(); 
-                        put_req_value_to_pkt2_table.apply(); 
-                        put_req_value_to_pkt3_table.apply(); 
-                        put_req_value_to_pkt4_table.apply(); 
-                        put_req_value_to_pkt5_table.apply(); 
-                        put_req_value_to_pkt6_table.apply(); 
-                        put_req_value_to_pkt7_table.apply(); 
-                        put_req_value_to_pkt8_table.apply(); 
+                        put_req_value1_to_pkt_table.apply(); 
+                        put_req_value2_to_pkt_table.apply(); 
+                        put_req_value3_to_pkt_table.apply(); 
+                        put_req_value4_to_pkt_table.apply(); 
+                        put_req_value5_to_pkt_table.apply(); 
+                        put_req_value6_to_pkt_table.apply(); 
+                        put_req_value7_to_pkt_table.apply(); 
+                        put_req_value8_to_pkt_table.apply(); 
+                        set_count_key_num_zero_table.apply();
                     }
                     else{
                         get_req_id();
