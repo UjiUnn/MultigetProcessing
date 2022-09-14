@@ -72,8 +72,6 @@ try:
 	client_id = 0
 	device_id = 0
 	pipe_id = 0xFFFF
-	is_master = True
-	#client = gc.ClientInterface(grpc_addr, client_id, device_id,is_master)
 	client = gc.ClientInterface(grpc_addr, client_id, device_id)
 	target = gc.Target(device_id, pipe_id)
 	client.bind_pipeline_config("netmc")
@@ -102,46 +100,35 @@ try:
 		64
 	]
 
-	small_ip_list = [
-		ip_list[3],
-		ip_list[4],
-		ip_list[5],
-		ip_list[6],
-		ip_list[7]
+    recirculate_port_list = [
+        68, 
+        69, 
+        70, 
+        71, 
+        192, 
+        193, 
+        194, 
+        195, 
+        196, 
+        197, 
+        198, 
+        199, 
+        324, 
+        325, 
+        326, 
+        327, 
+        448, 
+        449, 
+        450, 
+        451, 
+        452, 
+        453, 
+        454, 
+        455
     ]
-
-	small_port_list = [
-		port_list[3],
-		port_list[4],
-		port_list[5],
-		port_list[6],
-		port_list[7]
-	]
-
-	large_ip_list = [
-		ip_list[8]
-    ]
-
-	#print(large_ip_list[0])
-	large_port_list = [
-		port_list[8]
-	]
-
-	#for i in range(NUM_GRP_CTRL):
-		#val = 48
-		#val = 136 + 8*i
-		#port_list.append(val)
 
     #print port_list
 	port_table = client.bfrt_info_get().table_get("$PORT")
-
-	# Configure thresohld for large messages
-	threshold= client.bfrt_info_get().table_get("pipe.threshold")
-	threshold.entry_add(
-		target,
-		[threshold.make_key([gc.KeyTuple('$REGISTER_INDEX', 0)])],
-		[threshold.make_data(
-			[gc.DataTuple('threshold.f1', THRESHOLD_LARGE)])])
 
 	# Configure lookup table for converting server ID to IP address
 	get_dst_ip_table = client.bfrt_info_get().table_get("pipe.SwitchIngress.get_dst_ip_table")
