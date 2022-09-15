@@ -148,13 +148,13 @@ try:
 
 	mirror_fwd_table = client.bfrt_info_get().table_get("mirror_fwd_table") #
     table_clear(target, mirror_fwd_table)
-    #for i in range(?):
-    table_add(target, mirror_fwd_table, [("ig.intr_md.ingress_port", ip_list[i])], "mirror_fwd_action", [(recirculate_port_list[])]) #
+    for i in range(?):
+      table_add(target, mirror_fwd_table, [("ig.intr_md.ingress_port", ip_list[i])], "mirror_fwd_action", [(recirculate_port_list[])]) #
 
     mirror_clone_fwd_table = client.bfrt_info_get().table_get("mirror_clone_fwd_table") #
     table_clear(target, mirror_clone_fwd_action)
-    #for i in range(?):
-    table_add(target, mirror_clone_fwd_action, [("ig.intr_md.ingress_port", ip_list[i])], "mirror_clone_fwd_action", [(recirculate_port_list[])])
+    for i in range(?):
+      table_add(target, mirror_clone_fwd_action, [("ig.intr_md.ingress_port", ip_list[i])], "mirror_clone_fwd_action", [(recirculate_port_list[])])
 
    print("10.0.1.101",  binascii.hexlify(socket.inet_aton('10.0.1.101')).upper())
    print("10.0.1.102",  binascii.hexlify(socket.inet_aton('10.0.1.102')).upper())
